@@ -117,7 +117,7 @@ export default function DeployPage() {
   return (
     <div className="max-w-4xl mx-auto space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-white">Deploy OpenClaw</h1>
+        <h1 className="text-2xl font-bold text-white">Deploy AI Agent</h1>
         <p className="text-zinc-400 mt-1">Configure and launch your AI agent infrastructure.</p>
       </div>
 
@@ -450,7 +450,7 @@ export default function DeployPage() {
               disabled={deploying || !canNext}
               className="btn-primary font-semibold px-8 py-3 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {deploying ? "Deploying..." : "Deploy OpenClaw"}
+              {deploying ? "Deploying..." : "Deploy Agent"}
             </button>
           ) : (
             <button

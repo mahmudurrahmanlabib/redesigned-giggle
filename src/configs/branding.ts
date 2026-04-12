@@ -3,23 +3,23 @@
 export const BRANDING = {
   name: "SovereignML",
   shortName: "SovereignML",
-  tagline: "Deploy. Configure. Optimize.",
-  subtagline: "Your AI infrastructure, fully managed.",
+  tagline: "Launch. Automate. Scale.",
+  subtagline: "Your AI workforce, deployed and managed.",
   description:
-    "SovereignML is the AI operations layer on top of your infrastructure. Deploy OpenClaw in one click, then let us configure, maintain, and optimize it for you.",
+    "SovereignML is the AI operations platform for deploying intelligent agents that do real work. Launch AI agents in minutes, automate business operations, and scale your AI workforce with full ownership and control.",
   domain: "sovereignml.com",
   appUrl: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
   supportEmail: "support@sovereignml.com",
   noreplyEmail: "noreply@sovereignml.com",
   github: "https://github.com/sovereignml",
   twitter: "https://twitter.com/sovereignml",
-  // Positioning vs ClawHost: they give infra, we give outcomes.
+  demoUrl: "https://tidycal.com/sovereignml/demo",
   positioning: {
-    headline: "ClawHost gives you infra. SovereignML gives you outcomes.",
+    headline: "Others give you tools. SovereignML gives you agents that work.",
     bullets: [
-      "We configure your AI",
-      "We maintain uptime",
-      "We optimize performance",
+      "Deploy AI agents that automate real tasks",
+      "Monitor performance and health in real time",
+      "Scale from one agent to an entire AI workforce",
     ],
   },
 } as const

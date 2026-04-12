@@ -33,13 +33,14 @@ export default function Footer() {
               links: [
                 { href: "/pricing", label: "Pricing" },
                 { href: "/docs", label: "Documentation" },
-                { href: "/login?deploy=true", label: "Deploy OpenClaw" },
+                { href: "/#agents", label: "Agents" },
+                { href: "/login?deploy=true", label: "Launch an Agent" },
               ],
             },
             {
               title: "Resources",
               links: [
-                { href: "/community", label: "Community" },
+                { href: "/#demo-booking", label: "Book a Demo" },
                 { href: "/docs#faq", label: "FAQ" },
                 { href: BRANDING.github, label: "GitHub" },
               ],

@@ -22,8 +22,8 @@ const spaceMono = Space_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "SovereignML — Deploy, Configure & Manage Agentic AI",
-  description: "The AI operations layer. Deploy OpenClaw in one click, then let us configure, maintain, and optimize your agents.",
+  title: "SovereignML — Launch AI Agents That Actually Work",
+  description: "The AI operations platform. Deploy intelligent agents that automate real tasks — support, DevOps, sales, content, and more. Full ownership, zero complexity.",
 }
 
 export default function RootLayout({

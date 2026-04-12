@@ -28,9 +28,9 @@ export default function Navbar() {
           <div className="hidden md:flex gap-12">
             {[
               { href: "/#features", label: "Features" },
+              { href: "/#agents", label: "Agents" },
               { href: "/#pricing", label: "Pricing" },
               { href: "/docs", label: "Docs" },
-              { href: "/community", label: "Community" },
             ].map((link) => (
               <Link
                 key={link.href}
@@ -44,15 +44,17 @@ export default function Navbar() {
           </div>
 
           <div className="hidden md:flex items-center gap-4">
-            <Link
-              href="/login"
-              className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-[0.85rem] uppercase tracking-[0.05em] transition-colors"
+            <a
+              href="https://tidycal.com/sovereignml/demo"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="border border-[var(--border-color)] text-[var(--text-primary)] hover:border-[var(--accent-color)] hover:text-[var(--accent-color)] text-sm px-5 py-2.5 uppercase tracking-[0.05em] transition-all"
               style={{ fontFamily: "var(--font-mono)" }}
             >
+              Book Demo
+            </a>
+            <Link href="/login" className="btn-primary text-sm px-6 py-2.5">
               Log In
-            </Link>
-            <Link href="/login?deploy=true" className="btn-primary text-sm px-6 py-2.5">
-              Deploy Now
             </Link>
           </div>
 
@@ -93,9 +95,9 @@ export default function Navbar() {
           </button>
           {[
             { href: "/#features", label: "Features" },
+            { href: "/#agents", label: "Agents" },
             { href: "/#pricing", label: "Pricing" },
             { href: "/docs", label: "Docs" },
-            { href: "/community", label: "Community" },
           ].map((link) => (
             <Link
               key={link.href}
@@ -108,16 +110,18 @@ export default function Navbar() {
             </Link>
           ))}
           <hr className="border-[var(--border-color)] w-32" />
-          <Link
-            href="/login"
-            className="text-[var(--text-secondary)] text-lg uppercase tracking-[0.05em]"
+          <a
+            href="https://tidycal.com/sovereignml/demo"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="border border-[var(--border-color)] text-[var(--text-primary)] text-base px-8 py-3 uppercase tracking-[0.05em]"
             style={{ fontFamily: "var(--font-mono)" }}
             onClick={() => setMobileOpen(false)}
           >
+            Book Demo
+          </a>
+          <Link href="/login" className="btn-primary text-base px-8 py-3" onClick={() => setMobileOpen(false)}>
             Log In
-          </Link>
-          <Link href="/login?deploy=true" className="btn-primary text-base px-8 py-3" onClick={() => setMobileOpen(false)}>
-            Deploy Now
           </Link>
         </div>
       )}

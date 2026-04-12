@@ -2,9 +2,10 @@
 
 import Link from "next/link"
 import { motion } from "framer-motion"
-import { useState } from "react"
 import { PLANS } from "@/configs/plans"
-import { SERVER_TYPES, SERVER_CATEGORIES, type ServerCategory } from "@/configs/server-types"
+import { AGENT_CATEGORIES } from "@/configs/agent-categories"
+import { BRANDING } from "@/configs/branding"
+import { Check, ArrowRight } from "lucide-react"
 
 const fadeUp = {
   hidden: { opacity: 0, y: 20 },
@@ -15,21 +16,18 @@ const fadeUp = {
   }),
 }
 
-const featuredServers = [
-  { ...SERVER_TYPES[0], displayName: "Starter", popular: false },
-  { ...SERVER_TYPES[4], displayName: "Growth", popular: true },
-  { ...SERVER_TYPES[2], displayName: "Pro", popular: false },
-  { ...SERVER_TYPES[6], displayName: "Business", popular: false },
-]
+const agentAccess: Record<string, Record<string, boolean>> = {
+  starter: { automation: true, devops: false, support: true, research: false, content: false, sales: false, social: false, custom: false },
+  pro: { automation: true, devops: true, support: true, research: true, content: true, sales: true, social: true, custom: false },
+  enterprise: { automation: true, devops: true, support: true, research: true, content: true, sales: true, social: true, custom: true },
+}
 
 export default function PricingPage() {
-  const [activeCategory, setActiveCategory] = useState<ServerCategory>("CX")
-  const filtered = SERVER_TYPES.filter((s) => s.category === activeCategory && s.isActive)
-
   return (
     <div>
+      {/* Hero */}
       <section className="max-w-[1400px] mx-auto px-8 pb-16">
-        <div className="section-header-left max-w-[800px]">
+        <div className="max-w-[800px]">
           <motion.h1
             className="text-[3.5rem] md:text-[4rem] font-bold uppercase tracking-[0.02em] leading-[1.1] text-[var(--text-primary)]"
             style={{ fontFamily: "var(--font-display)" }}
@@ -38,7 +36,7 @@ export default function PricingPage() {
             animate="visible"
             custom={0}
           >
-            Simple, <span className="text-accent">Transparent</span> Pricing
+            Simple, <span className="text-[var(--accent-color)]">Transparent</span> Pricing
           </motion.h1>
           <motion.p
             className="text-[var(--text-secondary)] text-lg"
@@ -47,20 +45,20 @@ export default function PricingPage() {
             animate="visible"
             custom={1}
           >
-            Pay for what you use. No hidden fees, no surprises. Cancel anytime.
+            Start small, scale as you grow. No hidden fees, cancel anytime.
           </motion.p>
         </div>
       </section>
 
-      {/* Server Cards */}
-      <section className="max-w-[1400px] mx-auto px-8 pb-20">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-0">
-          {featuredServers.map((server, i) => (
+      {/* Plan Cards */}
+      <section className="max-w-[1200px] mx-auto px-8 pb-20">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-0">
+          {PLANS.map((plan, i) => (
             <motion.div
-              key={server.slug}
+              key={plan.slug}
               className={`relative p-8 transition-all duration-300 ${
-                server.popular
-                  ? "card-popular-terminal"
+                plan.highlight
+                  ? "border border-[var(--accent-color)] bg-[rgba(204,255,0,0.03)]"
                   : "border border-[var(--border-color)] bg-[var(--card-bg)]"
               } hover:bg-[var(--card-hover)]`}
               variants={fadeUp}
@@ -68,157 +66,155 @@ export default function PricingPage() {
               animate="visible"
               custom={i + 2}
             >
-              {server.popular && <div className="absolute -top-px left-0 right-0 h-[2px] bg-[var(--accent-color)]" />}
-              {server.popular && (
-                <span className="inline-block px-3 py-1 border border-[var(--accent-color)] text-[var(--accent-color)] text-[0.7rem] uppercase tracking-[0.1em] mb-4" style={{ fontFamily: "var(--font-mono)" }}>
+              {plan.highlight && (
+                <div className="absolute -top-3 left-6 bg-[var(--accent-color)] text-black font-[var(--font-mono)] text-xs font-bold uppercase tracking-widest px-3 py-1">
                   Most Popular
-                </span>
+                </div>
               )}
-              <h3 className="text-2xl font-bold uppercase tracking-[0.02em] text-[var(--text-primary)] mb-1" style={{ fontFamily: "var(--font-display)" }}>
-                {server.displayName}
-              </h3>
-              <p className="text-xs text-[var(--text-secondary)] mb-6" style={{ fontFamily: "var(--font-mono)" }}>
-                {server.vcpu} vCPU &middot; {server.ramGb} GB RAM &middot; {server.storageGb} GB
-              </p>
-              <div className="mb-6">
-                <span className="text-4xl font-bold text-[var(--text-primary)]" style={{ fontFamily: "var(--font-display)" }}>${server.priceMonthly}</span>
-                <span className="text-[var(--text-secondary)] text-sm">/mo</span>
-                <span className="text-[var(--text-secondary)] text-xs ml-2" style={{ fontFamily: "var(--font-mono)" }}>(${(server.priceYearly / 12).toFixed(0)}/yr)</span>
+
+              <h2
+                className="text-2xl font-bold uppercase tracking-[0.02em] text-[var(--text-primary)]"
+                style={{ fontFamily: "var(--font-display)" }}
+              >
+                {plan.name}
+              </h2>
+              <p className="mt-2 text-sm text-[var(--text-secondary)]">{plan.description}</p>
+
+              <div className="mt-6 flex items-baseline gap-1">
+                <span
+                  className="text-4xl font-bold text-[var(--text-primary)]"
+                  style={{ fontFamily: "var(--font-display)" }}
+                >
+                  ${plan.displayPriceMonthly}
+                </span>
+                <span className="text-[var(--text-secondary)]">/mo</span>
               </div>
-              <ul className="space-y-3 mb-8">
-                {[
-                  { label: "OpenClaw Pre-Installed", on: true },
-                  { label: "Unlimited Bandwidth", on: true },
-                  { label: "Root SSH Access", on: true },
-                  { label: "24/7 Online", on: true },
-                  { label: "Dedicated CPU", on: server.category !== "CX" },
-                  { label: "Email Support", on: true },
-                ].map((feat) => (
-                  <li key={feat.label} className="flex items-center gap-3 text-sm">
-                    {feat.on ? (
-                      <span className="text-[var(--accent-color)] font-bold" style={{ fontFamily: "var(--font-mono)" }}>&#10003;</span>
-                    ) : (
-                      <span className="text-[var(--border-color)] font-bold" style={{ fontFamily: "var(--font-mono)" }}>&times;</span>
-                    )}
-                    <span className={feat.on ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]"}>{feat.label}</span>
+
+              <ul className="mt-6 space-y-3 flex-1">
+                {plan.features.map((f) => (
+                  <li key={f} className="flex items-start gap-3 text-sm">
+                    <Check className="w-4 h-4 text-[var(--accent-color)] shrink-0 mt-0.5" />
+                    <span className="text-[var(--text-primary)]">{f}</span>
                   </li>
                 ))}
               </ul>
-              <Link href="/login?deploy=true" className={`block w-full text-center py-3 text-sm ${server.popular ? "btn-primary" : "btn-secondary"}`}>
-                Choose Plan
-              </Link>
+
+              {plan.tier === "enterprise" ? (
+                <a
+                  href={BRANDING.demoUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-8 block text-center py-3.5 text-sm border border-[var(--border-color)] text-[var(--text-primary)] font-[var(--font-mono)] font-bold uppercase tracking-wider hover:border-[var(--accent-color)] hover:text-[var(--accent-color)] transition-all"
+                >
+                  Book a Demo
+                </a>
+              ) : (
+                <Link
+                  href="/login?deploy=true"
+                  className={`mt-8 block text-center py-3.5 text-sm font-[var(--font-mono)] font-bold uppercase tracking-wider transition-all ${
+                    plan.highlight
+                      ? "bg-[var(--accent-color)] text-black hover:bg-white"
+                      : "border border-[var(--border-color)] text-[var(--text-primary)] hover:border-[var(--accent-color)] hover:text-[var(--accent-color)]"
+                  }`}
+                >
+                  Get Started
+                </Link>
+              )}
             </motion.div>
           ))}
         </div>
       </section>
 
-      {/* Management Plans */}
-      <section className="max-w-[1200px] mx-auto px-8 pb-20">
-        <div className="section-header-left max-w-[800px]">
-          <h2 className="text-[3rem] uppercase tracking-[0.02em] leading-[1.1] text-[var(--text-primary)] mb-2" style={{ fontFamily: "var(--font-display)" }}>
-            Management <span className="text-accent">Plans</span>
+      {/* Agent Access Comparison */}
+      <section className="max-w-[1000px] mx-auto px-8 pb-20">
+        <div className="max-w-[800px] mb-8">
+          <h2
+            className="text-[2.5rem] uppercase tracking-[0.02em] leading-[1.1] text-[var(--text-primary)] mb-2"
+            style={{ fontFamily: "var(--font-display)" }}
+          >
+            Agent Types <span className="text-[var(--accent-color)]">by Plan</span>
           </h2>
-          <p className="text-[var(--text-secondary)]">Server costs + management plan.</p>
+          <p className="text-[var(--text-secondary)]">
+            See which agent types are available at each tier.
+          </p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-0">
-          {PLANS.map((plan) => (
-            <div
-              key={plan.slug}
-              className={`relative p-8 transition-all duration-300 ${
-                plan.highlight ? "card-popular-terminal" : "border border-[var(--border-color)] bg-[var(--card-bg)]"
-              } hover:bg-[var(--card-hover)]`}
-            >
-              {plan.highlight && (
-                <span className="inline-block px-3 py-1 border border-[var(--accent-color)] text-[var(--accent-color)] text-[0.7rem] uppercase tracking-[0.1em] mb-4" style={{ fontFamily: "var(--font-mono)" }}>
-                  Most Popular
-                </span>
-              )}
-              <h2 className="text-2xl font-bold uppercase tracking-[0.02em] text-[var(--text-primary)]" style={{ fontFamily: "var(--font-display)" }}>{plan.name}</h2>
-              <p className="mt-2 text-sm text-[var(--text-secondary)]">{plan.description}</p>
-              <div className="mt-6 flex items-baseline gap-1">
-                <span className="text-4xl font-bold text-[var(--text-primary)]" style={{ fontFamily: "var(--font-display)" }}>${plan.displayPriceMonthly}</span>
-                <span className="text-[var(--text-secondary)]">/mo</span>
-              </div>
-              <p className="text-xs text-[var(--text-secondary)] mt-1" style={{ fontFamily: "var(--font-mono)" }}>+ server costs</p>
-              <ul className="mt-6 space-y-3 flex-1">
-                {plan.features.map((f) => (
-                  <li key={f} className="flex items-start gap-3 text-sm">
-                    <span className="text-[var(--accent-color)] font-bold mt-0.5" style={{ fontFamily: "var(--font-mono)" }}>&#10003;</span>
-                    <span className="text-[var(--text-primary)]">{f}</span>
-                  </li>
+
+        <div className="border border-[var(--border-color)] bg-[var(--card-bg)] overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[var(--border-color)]">
+                <th
+                  className="text-left text-[var(--text-secondary)] font-bold py-3 px-4 text-xs uppercase tracking-[0.05em]"
+                  style={{ fontFamily: "var(--font-mono)" }}
+                >
+                  Agent Type
+                </th>
+                {PLANS.map((p) => (
+                  <th
+                    key={p.slug}
+                    className="text-center text-[var(--text-secondary)] font-bold py-3 px-4 text-xs uppercase tracking-[0.05em]"
+                    style={{ fontFamily: "var(--font-mono)" }}
+                  >
+                    {p.name}
+                  </th>
                 ))}
-              </ul>
-              <Link href="/login?deploy=true" className={`mt-8 block text-center py-3.5 text-sm ${plan.highlight ? "btn-primary" : "btn-secondary"}`}>
-                Get Started
-              </Link>
-            </div>
-          ))}
+              </tr>
+            </thead>
+            <tbody>
+              {AGENT_CATEGORIES.map((cat) => (
+                <tr
+                  key={cat.slug}
+                  className="border-b border-[var(--border-color)]/50 hover:bg-[var(--card-hover)] transition-colors"
+                >
+                  <td className="py-3 px-4 text-[var(--text-primary)] font-semibold">
+                    {cat.name}
+                  </td>
+                  {PLANS.map((p) => (
+                    <td key={p.slug} className="py-3 px-4 text-center">
+                      {agentAccess[p.slug]?.[cat.slug] ? (
+                        <Check className="w-4 h-4 text-[var(--accent-color)] inline-block" />
+                      ) : (
+                        <span className="text-[var(--border-color)]">&mdash;</span>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </section>
 
-      {/* Full Server Table */}
+      {/* Enterprise CTA */}
       <section className="max-w-[1000px] mx-auto px-8 pb-24">
-        <div className="section-header-left max-w-[800px]">
-          <h2 className="text-[3rem] uppercase tracking-[0.02em] leading-[1.1] text-[var(--text-primary)] mb-2" style={{ fontFamily: "var(--font-display)" }}>
-            All <span className="text-accent">Servers</span>
-          </h2>
-          <p className="text-[var(--text-secondary)]">Choose the hardware for your OpenClaw deployment.</p>
-        </div>
-
-        <div className="border border-[var(--border-color)] bg-[var(--card-bg)] p-6">
-          <div className="flex flex-wrap gap-2 mb-6">
-            {SERVER_CATEGORIES.map((cat) => (
-              <button
-                key={cat.category}
-                onClick={() => setActiveCategory(cat.category)}
-                className={`px-4 py-2 text-xs font-bold uppercase tracking-[0.05em] transition-all duration-200 ${
-                  activeCategory === cat.category
-                    ? "bg-[var(--accent-color)] text-black border border-[var(--accent-color)]"
-                    : "bg-transparent text-[var(--text-secondary)] border border-[var(--border-color)] hover:border-[var(--accent-color)] hover:text-[var(--accent-color)]"
-                }`}
-                style={{ fontFamily: "var(--font-mono)" }}
-              >
-                {cat.category} — {cat.title}
-              </button>
-            ))}
-          </div>
-          <p className="text-[var(--text-secondary)] text-sm mb-6" style={{ fontFamily: "var(--font-mono)" }}>
-            &gt; {SERVER_CATEGORIES.find((c) => c.category === activeCategory)?.description}
-          </p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[var(--border-color)]">
-                  <th className="text-left text-[var(--text-secondary)] font-bold py-3 px-4 text-xs uppercase tracking-[0.05em]" style={{ fontFamily: "var(--font-mono)" }}>Server</th>
-                  <th className="text-center text-[var(--text-secondary)] font-bold py-3 px-4 text-xs uppercase tracking-[0.05em]" style={{ fontFamily: "var(--font-mono)" }}>vCPU</th>
-                  <th className="text-center text-[var(--text-secondary)] font-bold py-3 px-4 text-xs uppercase tracking-[0.05em]" style={{ fontFamily: "var(--font-mono)" }}>RAM</th>
-                  <th className="text-center text-[var(--text-secondary)] font-bold py-3 px-4 text-xs uppercase tracking-[0.05em]" style={{ fontFamily: "var(--font-mono)" }}>Storage</th>
-                  <th className="text-right text-[var(--text-secondary)] font-bold py-3 px-4 text-xs uppercase tracking-[0.05em]" style={{ fontFamily: "var(--font-mono)" }}>Monthly</th>
-                  <th className="text-right text-[var(--text-secondary)] font-bold py-3 px-4 text-xs uppercase tracking-[0.05em]" style={{ fontFamily: "var(--font-mono)" }}>Yearly</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((s) => (
-                  <tr key={s.slug} className="border-b border-[var(--border-color)]/50 hover:bg-[var(--card-hover)] transition-colors">
-                    <td className="py-3 px-4 text-[var(--text-primary)] font-semibold">{s.label}</td>
-                    <td className="py-3 px-4 text-center text-[var(--text-secondary)]">{s.vcpu}</td>
-                    <td className="py-3 px-4 text-center text-[var(--text-secondary)]">{s.ramGb} GB</td>
-                    <td className="py-3 px-4 text-center text-[var(--text-secondary)]">{s.storageGb} GB</td>
-                    <td className="py-3 px-4 text-right">
-                      <span className="text-[var(--text-primary)] font-semibold">${s.priceMonthly}</span><span className="text-[var(--text-secondary)]">/mo</span>
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      <span className="text-[var(--accent-color)] font-semibold">${s.priceYearly}</span><span className="text-[var(--text-secondary)]">/yr</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <div className="border border-[var(--border-color)] bg-[var(--bg-secondary)] p-10 text-center relative overflow-hidden">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(204,255,0,0.05)_0%,transparent_70%)] pointer-events-none" />
+          <div className="relative z-10">
+            <h3
+              className="text-2xl font-bold uppercase tracking-[0.02em] text-[var(--text-primary)] mb-3"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
+              Need a Custom AI System?
+            </h3>
+            <p className="text-[var(--text-secondary)] max-w-lg mx-auto mb-6">
+              Our team will design, build, and deploy a multi-agent system tailored to your business.
+            </p>
+            <a
+              href={BRANDING.demoUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 bg-[var(--accent-color)] text-black font-[var(--font-mono)] font-bold text-sm uppercase tracking-wider px-8 py-4 hover:bg-white transition-colors"
+            >
+              Book a Strategy Call <ArrowRight className="w-4 h-4" />
+            </a>
           </div>
         </div>
 
-        <p className="mt-8 text-[var(--text-secondary)] text-sm" style={{ fontFamily: "var(--font-mono)" }}>
-          &gt; All payments handled securely via Stripe. Yearly billing saves ~17% (2 months free).
+        <p
+          className="mt-8 text-[var(--text-secondary)] text-sm"
+          style={{ fontFamily: "var(--font-mono)" }}
+        >
+          &gt; All payments handled securely via Stripe. Cancel anytime.
         </p>
       </section>
     </div>

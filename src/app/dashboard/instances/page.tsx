@@ -32,7 +32,7 @@ export default async function InstancesPage() {
           >
             Instances
           </h1>
-          <p className="text-[var(--text-secondary)] mt-1 text-sm">All your OpenClaw deployments</p>
+          <p className="text-[var(--text-secondary)] mt-1 text-sm">All your deployed AI agents</p>
         </div>
         <Link href="/dashboard/deploy" className="btn-primary text-sm px-5 py-2.5">
           + Deploy New
@@ -43,7 +43,7 @@ export default async function InstancesPage() {
         <div className="border border-[var(--border-color)] bg-[var(--card-bg)] p-12 text-center">
           <p className="text-[var(--text-secondary)] mb-4">No instances yet.</p>
           <Link href="/dashboard/deploy" className="btn-primary inline-flex text-sm px-6 py-3">
-            Deploy OpenClaw
+            Deploy Agent
           </Link>
         </div>
       ) : (

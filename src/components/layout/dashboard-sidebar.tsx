@@ -5,11 +5,12 @@ import { usePathname } from "next/navigation"
 
 const navItems = [
   { href: "/dashboard", label: "Overview" },
-  { href: "/dashboard/deploy", label: "Deploy" },
-  { href: "/dashboard/instances", label: "Instances" },
+  { href: "/dashboard/deploy", label: "Deploy Agent" },
+  { href: "/dashboard/instances", label: "My Agents" },
   { href: "/dashboard/billing", label: "Billing" },
+  { href: "/dashboard/subscriptions", label: "Subscriptions" },
   { href: "/dashboard/ssh-keys", label: "SSH Keys" },
-  { href: "/dashboard/account", label: "Account" },
+  { href: "/dashboard/account", label: "Settings" },
 ]
 
 export function DashboardSidebar() {

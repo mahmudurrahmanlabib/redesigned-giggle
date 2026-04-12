@@ -133,9 +133,29 @@
 /* ─── Grid Pattern Background ───────────────────────────────────── */
 body {
   background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 50px 50px;
+  background-attachment: fixed;
+}
+
+/* Ensure alternating sections keep grid visible */
+.grid-through {
+  background-color: transparent !important;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 50px 50px;
+  background-attachment: fixed;
+}
+
+.grid-through-alt {
+  background-color: rgba(15, 15, 15, 0.85) !important;
+  background-image:
     linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
   background-size: 50px 50px;
+  background-attachment: fixed;
 }
 
 /* ─── Noise Overlay ─────────────────────────────────────────────── */
@@ -291,6 +311,11 @@ body::before {
 }
 
 /* ─── Animations ────────────────────────────────────────────────── */
+@keyframes scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
 @keyframes scanline {
   0% { transform: translateY(-100%); }
   100% { transform: translateY(100%); }
