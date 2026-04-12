@@ -31,8 +31,7 @@ export default function CommunityPage() {
           animate="visible"
           custom={1}
         >
-          Connect with fellow traders, get real-time updates, and stay ahead of
-          the market.
+          Connect with fellow Agentic AI users, get real-time updates, and stay ahead in the race.
         </motion.p>
 
         <div className="mt-16 grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -56,8 +55,7 @@ export default function CommunityPage() {
             </div>
             <h2 className="text-xl font-bold text-white">Telegram</h2>
             <p className="mt-3 text-zinc-400 text-sm leading-relaxed">
-              Get instant trade alerts, bot updates, and connect directly with
-              our team and community members.
+              Get instant product updates, new model launches, and connect directly with our team and community members.
             </p>
             <a
               href="#"
@@ -87,8 +85,7 @@ export default function CommunityPage() {
             </div>
             <h2 className="text-xl font-bold text-white">X / Twitter</h2>
             <p className="mt-3 text-zinc-400 text-sm leading-relaxed">
-              Follow us for market insights, product announcements, and trading
-              tips from our team.
+              Follow us for Agentic AI insights, product announcements, and tips from our team.
             </p>
             <a
               href="#"
@@ -109,7 +106,7 @@ export default function CommunityPage() {
           custom={0}
         >
           <p className="text-zinc-500 text-sm">
-            Join over 2,000+ traders in our growing community.
+            Join over 200+ Agentic AI users in our growing community.
           </p>
         </motion.div>
       </div>
