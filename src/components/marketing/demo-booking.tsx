@@ -1,18 +1,11 @@
 "use client"
 
-import { motion } from "framer-motion"
 import { ArrowRight } from "lucide-react"
 import { BRANDING } from "@/configs/branding"
 
 export function DemoBooking() {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true }}
-      transition={{ duration: 0.6 }}
-      className="border border-[var(--border-color)] bg-[var(--bg-secondary)] p-10 md:p-16 text-center relative overflow-hidden"
-    >
+    <div className="border border-[var(--border-color)] bg-[var(--bg-secondary)] p-10 md:p-16 text-center relative overflow-hidden">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(204,255,0,0.05)_0%,transparent_70%)] pointer-events-none" />
 
       <div className="relative z-10">
@@ -50,6 +43,6 @@ export function DemoBooking() {
           Book a Strategy Call <ArrowRight className="w-4 h-4" />
         </a>
       </div>
-    </motion.div>
+    </div>
   )
 }

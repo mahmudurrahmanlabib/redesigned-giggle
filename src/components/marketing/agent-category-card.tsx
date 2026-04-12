@@ -1,6 +1,5 @@
 "use client"
 
-import { motion } from "framer-motion"
 import {
   Zap,
   Terminal,
@@ -24,21 +23,11 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   Settings,
 }
 
-export function AgentCategoryCard({
-  category,
-  index,
-}: {
-  category: AgentCategory
-  index: number
-}) {
+export function AgentCategoryCard({ category }: { category: AgentCategory }) {
   const Icon = ICON_MAP[category.icon] ?? Zap
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true }}
-      transition={{ duration: 0.5, delay: index * 0.08 }}
+    <div
       className="group relative border border-[var(--border-color)] bg-[rgba(10,10,10,0.6)] p-6 transition-all duration-300 hover:border-[var(--accent-color)] hover:bg-[rgba(20,20,20,0.8)] hover:-translate-y-1 hover:shadow-[0_10px_30px_rgba(0,0,0,0.5)] cursor-pointer"
     >
       <div className="absolute top-0 left-0 w-full h-[2px] bg-[var(--accent-color)] scale-x-0 origin-left transition-transform duration-300 group-hover:scale-x-100" />
@@ -67,6 +56,6 @@ export function AgentCategoryCard({
           </li>
         ))}
       </ul>
-    </motion.div>
+    </div>
   )
 }

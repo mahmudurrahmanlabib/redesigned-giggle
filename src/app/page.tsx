@@ -1,7 +1,6 @@
 "use client"
 
 import Link from "next/link"
-import { motion, type Variants } from "framer-motion"
 import { useState } from "react"
 import Navbar from "@/components/layout/navbar"
 import Footer from "@/components/layout/footer"
@@ -25,18 +24,7 @@ import {
   Cpu,
   ChevronDown,
   Check,
-  X,
-  ArrowRight,
 } from "lucide-react"
-
-const fadeUp: Variants = {
-  hidden: { opacity: 0, y: 20 },
-  visible: (i: number) => ({
-    opacity: 1,
-    y: 0,
-    transition: { delay: i * 0.15, duration: 0.8, ease: [0.25, 0.46, 0.45, 0.94] },
-  }),
-}
 
 const features = [
   { title: "One-Click Deploy", desc: "Launch production-ready AI agents in minutes. Pre-configured, zero setup required.", marker: "DEPLOY", icon: Rocket },
@@ -122,53 +110,29 @@ export default function Home() {
   return (
     <>
       <Navbar />
-      <main className="min-h-screen">
+      <main className="relative z-10 min-h-screen">
         {/* ─── HERO ─── */}
         <section className="relative pt-[calc(var(--nav-height,80px)+8rem)] pb-24 min-h-screen flex items-center overflow-hidden">
           <div className="absolute inset-0 z-0 pointer-events-none bg-[repeating-linear-gradient(0deg,transparent,transparent_1px,rgba(255,255,255,0.02)_2px,rgba(255,255,255,0.02)_3px)]" />
           <div className="max-w-[1400px] mx-auto px-8 relative z-10 w-full grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-12 items-center">
             <div>
-              <motion.div
-                variants={fadeUp}
-                initial="hidden"
-                animate="visible"
-                custom={0}
-                className="font-[var(--font-mono)] text-[var(--accent-color)] text-sm mb-6 opacity-80"
-              >
+              <div className="font-[var(--font-mono)] text-[var(--accent-color)] text-sm mb-6 opacity-80">
                 [ SYSTEM_ONLINE ]
-              </motion.div>
+              </div>
 
-              <motion.h1
-                variants={fadeUp}
-                initial="hidden"
-                animate="visible"
-                custom={1}
-                className="font-[var(--font-display)] text-[clamp(2.5rem,5vw,5rem)] font-bold leading-[1.05] uppercase tracking-[0.02em] text-[var(--text-primary)] mb-6"
-              >
+              <h1 className="font-[var(--font-display)] text-[clamp(2.5rem,5vw,5rem)] font-bold leading-[1.05] uppercase tracking-[0.02em] text-[var(--text-primary)] mb-6">
                 Launch AI Agents<br />
                 That Actually<br />
                 <span className="text-[var(--accent-color)]" style={{ textShadow: "0 0 20px rgba(204,255,0,0.3)" }}>
                   Work.
                 </span>
-              </motion.h1>
+              </h1>
 
-              <motion.p
-                variants={fadeUp}
-                initial="hidden"
-                animate="visible"
-                custom={2}
-                className="text-[var(--text-secondary)] text-lg md:text-xl max-w-[600px] mb-8 border-l-2 border-[var(--accent-color)] pl-6 leading-relaxed"
-              >
+              <p className="text-[var(--text-secondary)] text-lg md:text-xl max-w-[600px] mb-8 border-l-2 border-[var(--accent-color)] pl-6 leading-relaxed">
                 Deploy intelligent agents that automate real tasks — support, DevOps, sales, content, and more. Full ownership, zero complexity.
-              </motion.p>
+              </p>
 
-              <motion.div
-                variants={fadeUp}
-                initial="hidden"
-                animate="visible"
-                custom={3}
-                className="flex flex-col sm:flex-row gap-4"
-              >
+              <div className="flex flex-col sm:flex-row gap-4">
                 <Link
                   href="/login?deploy=true"
                   className="btn-primary text-base px-8 py-4 text-center"
@@ -183,18 +147,12 @@ export default function Home() {
                 >
                   Book a Demo
                 </a>
-              </motion.div>
+              </div>
             </div>
 
-            <motion.div
-              variants={fadeUp}
-              initial="hidden"
-              animate="visible"
-              custom={3}
-              className="hidden lg:block"
-            >
+            <div className="hidden lg:block">
               <TerminalAnimation />
-            </motion.div>
+            </div>
           </div>
         </section>
 
@@ -241,8 +199,8 @@ export default function Home() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {AGENT_CATEGORIES.map((cat, i) => (
-                <AgentCategoryCard key={cat.slug} category={cat} index={i} />
+              {AGENT_CATEGORIES.map((cat) => (
+                <AgentCategoryCard key={cat.slug} category={cat} />
               ))}
             </div>
           </div>
@@ -280,13 +238,8 @@ export default function Home() {
               {features.map((f, i) => {
                 const Icon = f.icon
                 return (
-                  <motion.div
+                  <div
                     key={f.marker}
-                    variants={fadeUp}
-                    initial="hidden"
-                    whileInView="visible"
-                    viewport={{ once: true }}
-                    custom={i % 3}
                     className="group relative border border-[var(--border-color)] bg-[rgba(10,10,10,0.6)] p-6 min-h-[220px] flex flex-col justify-end transition-all duration-300 hover:border-[var(--accent-color)] hover:bg-[rgba(20,20,20,0.8)] hover:-translate-y-1 hover:shadow-[0_10px_30px_rgba(0,0,0,0.5)]"
                   >
                     <div className="absolute top-0 left-0 w-full h-[2px] bg-[var(--accent-color)] scale-x-0 origin-left transition-transform duration-300 group-hover:scale-x-100" />
@@ -300,7 +253,7 @@ export default function Home() {
                     <p className="text-[var(--text-secondary)] text-sm leading-relaxed">
                       {f.desc}
                     </p>
-                  </motion.div>
+                  </div>
                 )
               })}
             </div>
@@ -317,14 +270,9 @@ export default function Home() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {useCases.map((uc, i) => (
-                <motion.div
+              {useCases.map((uc) => (
+                <div
                   key={uc.tag}
-                  variants={fadeUp}
-                  initial="hidden"
-                  whileInView="visible"
-                  viewport={{ once: true }}
-                  custom={i}
                   className="border border-[var(--border-color)] bg-[var(--card-bg)] p-6 transition-all duration-300 hover:-translate-y-1 hover:border-[var(--accent-color)]"
                 >
                   <div className="inline-block px-3 py-1 border border-[var(--border-color)] font-[var(--font-mono)] text-xs text-[var(--accent-color)] uppercase tracking-widest mb-4">
@@ -340,7 +288,7 @@ export default function Home() {
                     <span className="text-[var(--accent-color)] mr-2">&gt;</span>
                     {uc.stat}
                   </div>
-                </motion.div>
+                </div>
               ))}
             </div>
           </div>
@@ -359,14 +307,9 @@ export default function Home() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {PLANS.map((plan, i) => (
-                <motion.div
+              {PLANS.map((plan) => (
+                <div
                   key={plan.slug}
-                  variants={fadeUp}
-                  initial="hidden"
-                  whileInView="visible"
-                  viewport={{ once: true }}
-                  custom={i}
                   className={`relative border p-8 transition-all duration-300 hover:-translate-y-1 ${
                     plan.highlight
                       ? "border-[var(--accent-color)] bg-[rgba(204,255,0,0.03)]"
@@ -423,7 +366,7 @@ export default function Home() {
                       Get Started
                     </Link>
                   )}
-                </motion.div>
+                </div>
               ))}
             </div>
           </div>
@@ -473,34 +416,13 @@ export default function Home() {
         <section className="py-24 text-center relative overflow-hidden">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(204,255,0,0.05)_0%,transparent_70%)] pointer-events-none" />
           <div className="max-w-[1400px] mx-auto px-8 relative z-10">
-            <motion.h2
-              variants={fadeUp}
-              initial="hidden"
-              whileInView="visible"
-              viewport={{ once: true }}
-              custom={0}
-              className="font-[var(--font-display)] text-[clamp(2rem,4vw,3.5rem)] font-bold uppercase tracking-[0.02em] text-[var(--text-primary)] mb-4"
-            >
+            <h2 className="font-[var(--font-display)] text-[clamp(2rem,4vw,3.5rem)] font-bold uppercase tracking-[0.02em] text-[var(--text-primary)] mb-4">
               Ready to Deploy Your First Agent?
-            </motion.h2>
-            <motion.p
-              variants={fadeUp}
-              initial="hidden"
-              whileInView="visible"
-              viewport={{ once: true }}
-              custom={1}
-              className="text-[var(--text-secondary)] text-lg max-w-xl mx-auto mb-8"
-            >
+            </h2>
+            <p className="text-[var(--text-secondary)] text-lg max-w-xl mx-auto mb-8">
               Stop renting intelligence. Start owning it. Launch your AI workforce in minutes.
-            </motion.p>
-            <motion.div
-              variants={fadeUp}
-              initial="hidden"
-              whileInView="visible"
-              viewport={{ once: true }}
-              custom={2}
-              className="flex flex-col sm:flex-row gap-4 justify-center"
-            >
+            </p>
+            <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Link href="/login?deploy=true" className="btn-primary text-base px-8 py-4">
                 Deploy Now
               </Link>
@@ -512,7 +434,7 @@ export default function Home() {
               >
                 Book a Demo
               </a>
-            </motion.div>
+            </div>
           </div>
         </section>
       </main>

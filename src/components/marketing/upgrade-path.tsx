@@ -1,6 +1,5 @@
 "use client"
 
-import { motion } from "framer-motion"
 import { ArrowRight } from "lucide-react"
 
 const STEPS = [
@@ -28,12 +27,8 @@ export function UpgradePath() {
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-0 relative">
       {STEPS.map((step, i) => (
-        <motion.div
+        <div
           key={step.label}
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.5, delay: i * 0.15 }}
           className="relative border border-[var(--border-color)] p-8 text-center group hover:border-[var(--accent-color)] transition-all duration-300"
         >
           <div className="font-[var(--font-mono)] text-4xl font-bold text-[rgba(255,255,255,0.05)] absolute top-4 right-4">
@@ -59,7 +54,7 @@ export function UpgradePath() {
           {i < STEPS.length - 1 && (
             <ArrowRight className="hidden md:block absolute -right-3 top-1/2 -translate-y-1/2 z-10 w-6 h-6 text-[var(--accent-color)]" />
           )}
-        </motion.div>
+        </div>
       ))}
     </div>
   )
