@@ -55,9 +55,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   callbacks: {
     ...authConfig.callbacks,
     async jwt({ token, user, account }) {
-      // On first sign-in, persist user data to token
+      // On first sign-in, persist user data to token (OAuth may surface `sub` before `id` is normalized)
       if (user) {
-        token.id = user.id
+        const u = user as { id?: string; sub?: string }
+        token.id = u.id ?? u.sub ?? (token.id as string | undefined) ?? token.sub
         token.role = (user as { role?: string }).role || "user"
       }
       // For OAuth users, fetch role + ban status from DB

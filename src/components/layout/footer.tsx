@@ -62,16 +62,34 @@ export default function Footer() {
                 {section.title}
               </h4>
               <ul className="space-y-4">
-                {section.links.map((link) => (
-                  <li key={link.label}>
-                    <Link
-                      href={link.href}
-                      className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:translate-x-[5px] text-sm transition-all duration-200 inline-block"
-                    >
-                      {link.label}
-                    </Link>
-                  </li>
-                ))}
+                {section.links.map((link) => {
+                  const className =
+                    "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:translate-x-[5px] text-sm transition-all duration-200 inline-block"
+                  const isExternal = /^https?:\/\//i.test(link.href)
+                  const isHashRoute = link.href.startsWith("/") && link.href.includes("#")
+                  if (isExternal || isHashRoute) {
+                    return (
+                      <li key={link.label}>
+                        <a
+                          href={link.href}
+                          className={className}
+                          {...(isExternal
+                            ? { target: "_blank", rel: "noopener noreferrer" }
+                            : {})}
+                        >
+                          {link.label}
+                        </a>
+                      </li>
+                    )
+                  }
+                  return (
+                    <li key={link.label}>
+                      <Link href={link.href} className={className}>
+                        {link.label}
+                      </Link>
+                    </li>
+                  )
+                })}
               </ul>
             </div>
           ))}
