@@ -31,7 +31,7 @@ export default function Footer() {
             {
               title: "Product",
               links: [
-                { href: "/pricing", label: "Pricing" },
+                { href: "/#pricing", label: "Pricing" },
                 { href: "/docs", label: "Documentation" },
                 { href: "/#agents", label: "Agents" },
                 { href: "/login?deploy=true", label: "Launch an Agent" },

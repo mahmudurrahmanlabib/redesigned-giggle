@@ -19,6 +19,14 @@ import type { BillingInterval } from "@/lib/pricing"
 type Step = "project" | "region" | "billing" | "server" | "advanced" | "review"
 const STEPS: Step[] = ["project", "region", "billing", "server", "advanced", "review"]
 
+function deploymentSlug(raw: string) {
+  return raw
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+}
+
 const STEP_LABELS: Record<Step, string> = {
   project: "Project",
   region: "Location",
@@ -114,6 +122,8 @@ export default function DeployPage() {
     (s) => s.category === selectedCategory && s.isActive
   )
 
+  const slugPreview = deploymentSlug(projectName)
+
   return (
     <div className="max-w-4xl mx-auto space-y-8">
       <div>
@@ -165,11 +175,23 @@ export default function DeployPage() {
               placeholder="my-ai-agent"
               className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-zinc-600 focus:outline-none focus:border-blue-500/50 transition-colors"
             />
-            {projectName && (
-              <p className="text-xs text-zinc-500">
-                Slug: <span className="text-zinc-300 font-mono">{projectName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}</span>
+            <div className="rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3">
+              <p className="text-[0.65rem] font-medium uppercase tracking-wide text-zinc-500 mb-1">
+                URL slug
               </p>
-            )}
+              <p className="font-mono text-sm text-zinc-200 break-all">
+                {slugPreview || (
+                  <span className="text-zinc-500 not-italic">
+                    Type a name to preview (letters, numbers, spaces, and hyphens).
+                  </span>
+                )}
+              </p>
+              {projectName.trim().length > 0 && projectName.trim().length < 2 && (
+                <p className="text-xs text-amber-400/90 mt-2">
+                  Enter at least 2 characters to continue — that keeps deployment names unique.
+                </p>
+              )}
+            </div>
           </div>
         )}
 
@@ -375,6 +397,9 @@ export default function DeployPage() {
                 <div className="bg-white/5 rounded-xl p-4">
                   <p className="text-zinc-500 text-xs uppercase tracking-wide mb-1">Project</p>
                   <p className="text-white font-medium">{projectName}</p>
+                  <p className="text-zinc-500 text-xs mt-2 font-mono">
+                    slug: {slugPreview || "—"}
+                  </p>
                 </div>
                 <div className="bg-white/5 rounded-xl p-4">
                   <p className="text-zinc-500 text-xs uppercase tracking-wide mb-1">Region</p>

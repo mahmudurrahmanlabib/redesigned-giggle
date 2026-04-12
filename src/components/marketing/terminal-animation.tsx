@@ -1,6 +1,22 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, useSyncExternalStore } from "react"
+
+function subscribeReducedMotion(onStoreChange: () => void) {
+  if (typeof window === "undefined") return () => {}
+  const mq = window.matchMedia("(prefers-reduced-motion: reduce)")
+  mq.addEventListener("change", onStoreChange)
+  return () => mq.removeEventListener("change", onStoreChange)
+}
+
+function getReducedMotionSnapshot() {
+  if (typeof window === "undefined") return false
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches
+}
+
+function getReducedMotionServerSnapshot() {
+  return false
+}
 
 type TerminalLine = {
   text: string
@@ -33,8 +49,18 @@ const TERMINAL_LINES: TerminalLine[] = [
 export function TerminalAnimation() {
   const [lines, setLines] = useState<string[]>([])
   const containerRef = useRef<HTMLPreElement>(null)
+  const reducedMotion = useSyncExternalStore(
+    subscribeReducedMotion,
+    getReducedMotionSnapshot,
+    getReducedMotionServerSnapshot
+  )
 
   useEffect(() => {
+    if (reducedMotion) {
+      setLines(TERMINAL_LINES.map((l) => l.text))
+      return
+    }
+
     let alive = true
     const timeouts: ReturnType<typeof setTimeout>[] = []
     const schedule = (fn: () => void, ms: number) => {
@@ -77,13 +103,13 @@ export function TerminalAnimation() {
       schedule(processLine, line.delay)
     }
 
-    schedule(processLine, 1000)
+    schedule(processLine, 350)
 
     return () => {
       alive = false
       for (const id of timeouts) clearTimeout(id)
     }
-  }, [])
+  }, [reducedMotion])
 
   useEffect(() => {
     if (containerRef.current) {
