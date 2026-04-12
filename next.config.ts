@@ -43,6 +43,7 @@ function wwwToApexRedirect():
 }
 
 const nextConfig: NextConfig = {
+  reactStrictMode: false,
   ...(devOrigins.length > 0 ? { allowedDevOrigins: devOrigins } : {}),
   async redirects() {
     const apex = wwwToApexRedirect()
