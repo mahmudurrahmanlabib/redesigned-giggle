@@ -1,9 +1,12 @@
 import type { NextConfig } from "next"
 
-const devOrigins =
-  process.env.ALLOWED_DEV_ORIGINS?.split(",")
+const devOrigins = [
+  "sovereignml.com",
+  "www.sovereignml.com",
+  ...(process.env.ALLOWED_DEV_ORIGINS?.split(",")
     .map((h) => h.trim())
-    .filter(Boolean) ?? []
+    .filter(Boolean) ?? []),
+]
 
 function wwwToApexRedirect():
   | {
