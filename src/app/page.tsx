@@ -114,7 +114,7 @@ export default function Home() {
         {/* ─── HERO ─── */}
         <section className="relative pt-[calc(var(--nav-height,80px)+8rem)] pb-24 min-h-screen flex items-center overflow-hidden">
           <div className="absolute inset-0 z-0 pointer-events-none bg-[repeating-linear-gradient(0deg,transparent,transparent_1px,rgba(255,255,255,0.02)_2px,rgba(255,255,255,0.02)_3px)]" />
-          <div className="max-w-[1400px] mx-auto px-8 relative z-10 w-full grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-12 lg:items-center">
+          <div className="max-w-[1400px] mx-auto px-8 relative z-10 w-full grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-12 items-center">
             <div>
               <div className="font-[var(--font-mono)] text-[var(--accent-color)] text-sm mb-6 opacity-80">
                 [ SYSTEM_ONLINE ]
@@ -150,7 +150,7 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="mt-10 w-full min-w-0 lg:mt-0">
+            <div className="hidden lg:block">
               <TerminalAnimation />
             </div>
           </div>

@@ -1,6 +1,16 @@
-"use client"
+"use client";
 
-import { useState } from "react"
+import { useState } from "react";
+import { motion } from "framer-motion";
+
+const fadeUp = {
+  hidden: { opacity: 0, y: 30 },
+  visible: (i: number) => ({
+    opacity: 1,
+    y: 0,
+    transition: { delay: i * 0.1, duration: 0.6, ease: "easeOut" as const },
+  }),
+};
 
 const faqItems = [
   {
@@ -23,21 +33,20 @@ const faqItems = [
     answer:
       "When your monthly subscription expires, the bot will stop executing new trades. Any open positions will remain as they are. You can renew your subscription at any time to resume automated trading.",
   },
-]
+];
 
 function FAQItem({
   question,
   answer,
 }: {
-  question: string
-  answer: string
+  question: string;
+  answer: string;
 }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(false);
 
   return (
     <div className="border border-white/10 rounded-xl overflow-hidden">
       <button
-        type="button"
         onClick={() => setOpen(!open)}
         className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-white/5 transition-colors"
       >
@@ -62,103 +71,178 @@ function FAQItem({
         </div>
       )}
     </div>
-  )
+  );
 }
 
 export default function DocsPage() {
   return (
     <div className="bg-[#0a0a0f] min-h-screen">
       <div className="max-w-3xl mx-auto px-6 py-20">
-        <h1 className="text-4xl md:text-5xl font-bold text-white">Documentation</h1>
-        <p className="mt-4 text-zinc-400 text-lg">
+        <motion.h1
+          className="text-4xl md:text-5xl font-bold text-white"
+          variants={fadeUp}
+          initial="hidden"
+          animate="visible"
+          custom={0}
+        >
+          Documentation
+        </motion.h1>
+        <motion.p
+          className="mt-4 text-zinc-400 text-lg"
+          variants={fadeUp}
+          initial="hidden"
+          animate="visible"
+          custom={1}
+        >
           Everything you need to get started with CopyBot Pro.
-        </p>
+        </motion.p>
 
-        <section className="mt-16">
-          <h2 className="text-2xl font-bold text-white mb-4">Getting Started</h2>
+        {/* Getting Started */}
+        <motion.section
+          className="mt-16"
+          variants={fadeUp}
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true }}
+          custom={0}
+        >
+          <h2 className="text-2xl font-bold text-white mb-4">
+            Getting Started
+          </h2>
           <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 space-y-4">
             <p className="text-zinc-400 text-sm leading-relaxed">
-              Getting started with CopyBot Pro is simple. Follow these steps to begin automated copy
-              trading:
+              Getting started with CopyBot Pro is simple. Follow these steps to
+              begin automated copy trading:
             </p>
             <ol className="space-y-3 text-zinc-400 text-sm leading-relaxed list-decimal list-inside">
-              <li>Create an account by clicking &ldquo;Get Started&rdquo; and filling in your details.</li>
               <li>
-                Choose a copy trading bot that matches your trading strategy and risk appetite.
+                Create an account by clicking &ldquo;Get Started&rdquo; and
+                filling in your details.
               </li>
-              <li>Complete the one-time $49 access payment via USDT (BEP20 network).</li>
-              <li>Submit your transaction ID (TXID) for verification.</li>
-              <li>Once verified, configure your bot settings and start trading.</li>
+              <li>
+                Choose a copy trading bot that matches your trading strategy and
+                risk appetite.
+              </li>
+              <li>
+                Complete the one-time $49 access payment via USDT (BEP20
+                network).
+              </li>
+              <li>
+                Submit your transaction ID (TXID) for verification.
+              </li>
+              <li>
+                Once verified, configure your bot settings and start trading.
+              </li>
             </ol>
           </div>
-        </section>
+        </motion.section>
 
-        <section className="mt-12">
-          <h2 className="text-2xl font-bold text-white mb-4">Payment Process</h2>
+        {/* Payment Process */}
+        <motion.section
+          className="mt-12"
+          variants={fadeUp}
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true }}
+          custom={0}
+        >
+          <h2 className="text-2xl font-bold text-white mb-4">
+            Payment Process
+          </h2>
           <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 space-y-4">
             <p className="text-zinc-400 text-sm leading-relaxed">
-              All payments are processed using{" "}
-              <strong className="text-white">USDT on the BEP20 (Binance Smart Chain)</strong> network.
-              Here is how it works:
+              All payments are processed using <strong className="text-white">USDT on the BEP20 (Binance Smart Chain)</strong> network. Here is how it works:
             </p>
             <div className="space-y-3 text-zinc-400 text-sm leading-relaxed">
               <p>
-                <strong className="text-zinc-200">1. Payment Address:</strong> After selecting your bot,
-                you will be shown a USDT BEP20 wallet address. Send exactly the required amount to this
-                address.
+                <strong className="text-zinc-200">1. Payment Address:</strong>{" "}
+                After selecting your bot, you will be shown a USDT BEP20 wallet
+                address. Send exactly the required amount to this address.
               </p>
               <p>
-                <strong className="text-zinc-200">2. TXID Submission:</strong> After sending the payment,
-                copy the transaction hash (TXID) from your wallet or exchange and paste it into the
-                verification form on your dashboard.
+                <strong className="text-zinc-200">2. TXID Submission:</strong>{" "}
+                After sending the payment, copy the transaction hash (TXID) from
+                your wallet or exchange and paste it into the verification form on
+                your dashboard.
               </p>
               <p>
-                <strong className="text-zinc-200">3. Verification:</strong> Our system automatically
-                verifies your transaction on the blockchain. This usually takes 5-30 minutes. You will be
-                notified once your payment is confirmed.
+                <strong className="text-zinc-200">3. Verification:</strong>{" "}
+                Our system automatically verifies your transaction on the
+                blockchain. This usually takes 5-30 minutes. You will be notified
+                once your payment is confirmed.
               </p>
               <p>
-                <strong className="text-zinc-200">4. Monthly Renewal:</strong> After your first month, the
-                subscription renews at $10/month. You will receive a reminder before each renewal is due.
+                <strong className="text-zinc-200">4. Monthly Renewal:</strong>{" "}
+                After your first month, the subscription renews at $10/month.
+                You will receive a reminder before each renewal is due.
               </p>
             </div>
           </div>
-        </section>
+        </motion.section>
 
-        <section className="mt-12">
+        {/* Bot Usage */}
+        <motion.section
+          className="mt-12"
+          variants={fadeUp}
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true }}
+          custom={0}
+        >
           <h2 className="text-2xl font-bold text-white mb-4">Bot Usage</h2>
           <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 space-y-4">
             <p className="text-zinc-400 text-sm leading-relaxed">
-              Once your payment is verified, you can configure and run your bot from the dashboard.
+              Once your payment is verified, you can configure and run your bot
+              from the dashboard.
             </p>
             <div className="space-y-3 text-zinc-400 text-sm leading-relaxed">
               <p>
-                <strong className="text-zinc-200">Risk Settings:</strong> Configure your maximum position
-                size, stop-loss percentage, and take-profit targets. We recommend starting with conservative
+                <strong className="text-zinc-200">Risk Settings:</strong>{" "}
+                Configure your maximum position size, stop-loss percentage, and
+                take-profit targets. We recommend starting with conservative
                 settings and adjusting as you become more comfortable.
               </p>
               <p>
-                <strong className="text-zinc-200">Expected Behavior:</strong> The bot mirrors trades from
-                top-performing strategies. It operates 24/7 and executes trades automatically based on the
-                signals it receives. Performance varies based on market conditions.
+                <strong className="text-zinc-200">Expected Behavior:</strong>{" "}
+                The bot mirrors trades from top-performing strategies. It
+                operates 24/7 and executes trades automatically based on the
+                signals it receives. Performance varies based on market
+                conditions.
               </p>
               <p>
-                <strong className="text-zinc-200">Monitoring:</strong> Use the real-time analytics dashboard
-                to track your bot&apos;s performance, view trade history, and monitor your portfolio balance.
+                <strong className="text-zinc-200">Monitoring:</strong>{" "}
+                Use the real-time analytics dashboard to track your bot&apos;s
+                performance, view trade history, and monitor your portfolio
+                balance.
               </p>
             </div>
           </div>
-        </section>
+        </motion.section>
 
-        <section className="mt-12 pb-12" id="faq">
-          <h2 className="text-2xl font-bold text-white mb-6">Frequently Asked Questions</h2>
+        {/* FAQ */}
+        <motion.section
+          className="mt-12 pb-12"
+          id="faq"
+          variants={fadeUp}
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true }}
+          custom={0}
+        >
+          <h2 className="text-2xl font-bold text-white mb-6">
+            Frequently Asked Questions
+          </h2>
           <div className="space-y-3">
             {faqItems.map((item) => (
-              <FAQItem key={item.question} question={item.question} answer={item.answer} />
+              <FAQItem
+                key={item.question}
+                question={item.question}
+                answer={item.answer}
+              />
             ))}
           </div>
-        </section>
+        </motion.section>
       </div>
     </div>
-  )
+  );
 }
