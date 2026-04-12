@@ -1,163 +1,448 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
+import {
+  Rocket,
+  Terminal,
+  CreditCard,
+  Shield,
+  Activity,
+  Bot,
+  Settings,
+  ChevronDown,
+  ArrowRight,
+} from "lucide-react"
 
 const faqItems = [
   {
-    question: "What if my payment is not verified?",
+    question: "What is SovereignML?",
     answer:
-      "If your payment is not verified within 24 hours, please contact our support team via Telegram with your TXID and payment details. Our team will manually review the transaction and resolve any issues promptly.",
+      "SovereignML is an AI operations platform that lets you deploy, manage, and scale intelligent agents that automate real business tasks — from customer support to DevOps to content generation. You pick the agent type, configure it, and it runs.",
   },
   {
-    question: "How long does verification take?",
+    question: "Do I need AI/ML expertise to use SovereignML?",
     answer:
-      "Payment verification typically takes between 5 to 30 minutes after submitting your TXID. During high-traffic periods, it may take up to 2 hours. You will receive a confirmation notification once verified.",
+      "No. Our platform handles all the complexity. You choose what you want to automate, configure the basics, and we handle the deployment, optimization, and monitoring. For advanced custom builds, our team can design and deploy bespoke multi-agent systems.",
   },
   {
-    question: "Can I use multiple bots?",
+    question: "What agent types are available?",
     answer:
-      "Yes, you can subscribe to multiple bots simultaneously. Each bot requires its own $49 access fee and $10/month subscription. All bots can be managed from a single dashboard.",
+      "We support 8 agent categories: Automation (workflows, business ops), DevOps (infra monitoring, CI/CD), Support (customer tickets, live chat), Research (data analysis, web scraping), Content (blog posts, SEO copy), Sales (lead gen, outreach), Social Media Manager (content scheduling, growth), and Custom (bespoke builds).",
   },
   {
-    question: "What happens when my subscription expires?",
+    question: "How does billing work?",
     answer:
-      "When your monthly subscription expires, the bot will stop executing new trades. Any open positions will remain as they are. You can renew your subscription at any time to resume automated trading.",
+      "Billing is monthly or yearly via Stripe. Starter is $5/mo (1 agent), Pro is $29/mo (up to 10 agents), and Enterprise is $199/mo (unlimited agents + dedicated support). Yearly plans save ~17%. You can manage subscriptions from your dashboard.",
+  },
+  {
+    question: "Can I deploy multiple agents?",
+    answer:
+      "Yes. Pro plans support up to 10 simultaneous agents across all agent types. Enterprise plans support unlimited agents. Each agent gets its own configuration, region, compute tier, and monitoring dashboard.",
+  },
+  {
+    question: "What regions are available for deployment?",
+    answer:
+      "We currently offer 5 active regions: US East (Ashburn), US West (Hillsboro), EU Frankfurt, EU Helsinki, and Singapore. Tokyo (AP Northeast) is coming soon. You can choose the region closest to your users for optimal latency.",
   },
 ]
 
-function FAQItem({
-  question,
-  answer,
-}: {
-  question: string
-  answer: string
-}) {
+function FAQItem({ question, answer }: { question: string; answer: string }) {
   const [open, setOpen] = useState(false)
-
   return (
-    <div className="border border-white/10 rounded-xl overflow-hidden">
+    <div className="border border-[var(--border-color)] transition-all duration-200 hover:border-[var(--accent-color)]">
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-white/5 transition-colors"
+        className="w-full flex items-center justify-between p-5 text-left cursor-pointer"
       >
-        <span className="text-white font-medium text-sm">{question}</span>
-        <svg
-          className={`w-5 h-5 text-zinc-400 shrink-0 ml-4 transition-transform ${
-            open ? "rotate-180" : ""
-          }`}
-          viewBox="0 0 20 20"
-          fill="currentColor"
+        <span
+          className="font-bold uppercase tracking-wide text-[var(--text-primary)] text-sm"
+          style={{ fontFamily: "var(--font-display)" }}
         >
-          <path
-            fillRule="evenodd"
-            d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-            clipRule="evenodd"
-          />
-        </svg>
+          {question}
+        </span>
+        <ChevronDown
+          className={`w-5 h-5 text-[var(--accent-color)] shrink-0 ml-4 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+        />
       </button>
       {open && (
-        <div className="px-6 pb-4">
-          <p className="text-zinc-400 text-sm leading-relaxed">{answer}</p>
+        <div className="px-5 pb-5">
+          <p className="text-[var(--text-secondary)] text-sm leading-relaxed">{answer}</p>
         </div>
       )}
     </div>
   )
 }
 
+const sections = [
+  {
+    icon: Rocket,
+    title: "Quick Start",
+    id: "quickstart",
+    content: (
+      <div className="space-y-4 text-[var(--text-secondary)] text-sm leading-relaxed">
+        <p>Get your first AI agent running in under 5 minutes:</p>
+        <ol className="space-y-3 list-none">
+          {[
+            "Create an account at sovereignml.com/register",
+            "From your dashboard, click Deploy Agent",
+            "Name your project — a URL slug is auto-generated",
+            "Choose a deployment region closest to your users",
+            "Select a billing interval (monthly or yearly)",
+            "Pick a compute tier based on your workload",
+            "Optionally add SSH keys or extra storage",
+            "Review your config and click Deploy Agent",
+          ].map((step, i) => (
+            <li key={i} className="flex items-start gap-3">
+              <span
+                className="shrink-0 w-6 h-6 flex items-center justify-center bg-[var(--accent-dim)] text-[var(--accent-color)] text-xs font-bold"
+                style={{ fontFamily: "var(--font-mono)" }}
+              >
+                {i + 1}
+              </span>
+              <span>{step}</span>
+            </li>
+          ))}
+        </ol>
+        <p className="pt-2">
+          In development mode, agents activate immediately without payment. In production, you are redirected to Stripe Checkout to complete billing before the agent provisions.
+        </p>
+      </div>
+    ),
+  },
+  {
+    icon: Bot,
+    title: "Agent Types",
+    id: "agents",
+    content: (
+      <div className="space-y-4 text-[var(--text-secondary)] text-sm leading-relaxed">
+        <p>SovereignML supports 8 agent categories, each purpose-built for a specific business function:</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {[
+            { name: "Automation Agent", desc: "Automate workflows, data entry, scheduled reports, and business ops.", plan: "Starter" },
+            { name: "DevOps Agent", desc: "Monitor infrastructure, manage CI/CD pipelines, and auto-resolve incidents.", plan: "Pro" },
+            { name: "Support Agent", desc: "Handle customer tickets, FAQ auto-responses, and live chat 24/7.", plan: "Starter" },
+            { name: "Research Agent", desc: "Scrape the web, analyze data, and generate actionable summaries.", plan: "Pro" },
+            { name: "Content Agent", desc: "Create blog posts, newsletters, and SEO-optimized copy.", plan: "Pro" },
+            { name: "Sales Agent", desc: "Generate leads, run outreach sequences, and enrich your CRM.", plan: "Pro" },
+            { name: "Social Media Manager", desc: "Schedule posts, optimize engagement, and execute growth strategies.", plan: "Pro" },
+            { name: "Custom Agent", desc: "Bespoke multi-agent systems built to your exact requirements.", plan: "Enterprise" },
+          ].map((agent) => (
+            <div key={agent.name} className="border border-[var(--border-color)] p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-bold text-[var(--text-primary)] text-sm uppercase" style={{ fontFamily: "var(--font-display)" }}>
+                  {agent.name}
+                </span>
+                <span
+                  className="text-[0.65rem] uppercase tracking-widest border border-[var(--border-color)] px-2 py-0.5 text-[var(--accent-color)]"
+                  style={{ fontFamily: "var(--font-mono)" }}
+                >
+                  {agent.plan}
+                </span>
+              </div>
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{agent.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    ),
+  },
+  {
+    icon: Settings,
+    title: "Deploy Wizard",
+    id: "deploy",
+    content: (
+      <div className="space-y-4 text-[var(--text-secondary)] text-sm leading-relaxed">
+        <p>The 6-step deploy wizard walks you through every configuration option:</p>
+        <div className="space-y-3">
+          {[
+            { step: "1. Project", desc: "Enter your agent name. A URL-safe slug is auto-generated (e.g. my-support-agent → my-support-agent)." },
+            { step: "2. Region", desc: "Pick from 5 active regions. Choose the one geographically closest to your users for lowest latency." },
+            { step: "3. Billing", desc: "Choose monthly or yearly billing. Yearly saves ~17% (2 months free). Price updates in real-time." },
+            { step: "4. Server", desc: "Pick a compute tier: Standard (CX), Performance AMD (CPX), ARM (CAX), or Dedicated (CCX). 16 configurations from 2–16 vCPU." },
+            { step: "5. Advanced", desc: "Optional: set a root password (AES-256-GCM encrypted at rest), add an SSH key, or provision up to 1000 GB extra storage at $0.05/GB/mo." },
+            { step: "6. Review", desc: "Full config summary with itemized price breakdown. Confirm and deploy." },
+          ].map((item) => (
+            <div key={item.step} className="flex gap-4 border-l-2 border-[var(--border-color)] pl-4">
+              <div>
+                <p className="font-bold text-[var(--text-primary)] mb-1" style={{ fontFamily: "var(--font-mono)", fontSize: "0.8rem" }}>
+                  {item.step}
+                </p>
+                <p>{item.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    ),
+  },
+  {
+    icon: Activity,
+    title: "Managing Agents",
+    id: "managing",
+    content: (
+      <div className="space-y-4 text-[var(--text-secondary)] text-sm leading-relaxed">
+        <p>All your deployed agents are accessible from the My Agents dashboard at <code className="text-[var(--accent-color)] bg-[var(--accent-dim)] px-1">/dashboard/instances</code>.</p>
+        <div className="space-y-3">
+          <div>
+            <p className="font-bold text-[var(--text-primary)] mb-1">Status Badges</p>
+            <p>Each agent shows a real-time status: <span className="text-emerald-400">running</span>, <span className="text-yellow-400">provisioning</span>, <span className="text-zinc-400">stopped</span>, <span className="text-red-400">failed</span>, or <span className="text-zinc-600">deleted</span>.</p>
+          </div>
+          <div>
+            <p className="font-bold text-[var(--text-primary)] mb-1">Restart</p>
+            <p>Running or failed agents can be restarted from the instances page. The agent briefly enters a provisioning state before coming back online.</p>
+          </div>
+          <div>
+            <p className="font-bold text-[var(--text-primary)] mb-1">Stop</p>
+            <p>Running agents can be stopped. Stopped agents retain their configuration and can be restarted at any time. Your subscription continues while stopped.</p>
+          </div>
+          <div>
+            <p className="font-bold text-[var(--text-primary)] mb-1">Delete</p>
+            <p>Deleting an agent permanently removes it and cancels the associated subscription. This action cannot be undone.</p>
+          </div>
+        </div>
+      </div>
+    ),
+  },
+  {
+    icon: CreditCard,
+    title: "Billing & Subscriptions",
+    id: "billing",
+    content: (
+      <div className="space-y-4 text-[var(--text-secondary)] text-sm leading-relaxed">
+        <p>Billing is handled via Stripe. Each deployed agent creates a Stripe subscription tied to your account.</p>
+        <div className="space-y-3">
+          <div>
+            <p className="font-bold text-[var(--text-primary)] mb-1">Plans</p>
+            <p>Starter ($5/mo) supports 1 agent. Pro ($29/mo) supports up to 10 agents across all types. Enterprise ($199/mo) offers unlimited agents, custom builds, and dedicated support.</p>
+          </div>
+          <div>
+            <p className="font-bold text-[var(--text-primary)] mb-1">Yearly Billing</p>
+            <p>Choosing yearly billing at deploy time saves approximately 17% — equivalent to 2 months free. The billing interval cannot be changed after deployment.</p>
+          </div>
+          <div>
+            <p className="font-bold text-[var(--text-primary)] mb-1">Billing Dashboard</p>
+            <p>View your estimated monthly cost, active subscriptions, renewal dates, and per-agent billing details at <code className="text-[var(--accent-color)] bg-[var(--accent-dim)] px-1">/dashboard/billing</code>.</p>
+          </div>
+          <div>
+            <p className="font-bold text-[var(--text-primary)] mb-1">Payment Issues</p>
+            <p>If a payment fails, subscriptions enter a <span className="text-yellow-400">past_due</span> state. Update your payment method via Stripe to restore service. Contact support if issues persist.</p>
+          </div>
+        </div>
+      </div>
+    ),
+  },
+  {
+    icon: Shield,
+    title: "Security",
+    id: "security",
+    content: (
+      <div className="space-y-4 text-[var(--text-secondary)] text-sm leading-relaxed">
+        <div className="space-y-3">
+          {[
+            { title: "JWT Sessions", desc: "Stateless authentication via NextAuth v5. No server-side session storage. Role (user/admin) is embedded in the JWT token." },
+            { title: "Password Hashing", desc: "All passwords are hashed with bcryptjs using 10 salt rounds. Passwords are never stored in plaintext." },
+            { title: "Root Password Encryption", desc: "Instance root passwords are encrypted at rest using AES-256-GCM with a per-instance initialization vector. The encryption key is stored as an environment variable, never in the database." },
+            { title: "Reset Token Security", desc: "Password reset tokens are stored as SHA-256 hashes. The plaintext token is only ever in the reset email link, never in our database." },
+            { title: "Rate Limiting", desc: "Registration is limited to 5 attempts per IP per hour. Password reset is limited to 3 emails per address per hour." },
+            { title: "Data Isolation", desc: "All database queries are scoped to your userId. Agents, subscriptions, and SSH keys from one account are never accessible to another." },
+          ].map((item) => (
+            <div key={item.title} className="flex gap-4 border-l-2 border-[var(--accent-color)]/30 pl-4">
+              <div>
+                <p className="font-bold text-[var(--text-primary)] mb-1" style={{ fontFamily: "var(--font-mono)", fontSize: "0.8rem" }}>
+                  {item.title}
+                </p>
+                <p>{item.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    ),
+  },
+  {
+    icon: Terminal,
+    title: "API Reference",
+    id: "api",
+    content: (
+      <div className="space-y-6 text-[var(--text-secondary)] text-sm leading-relaxed">
+        {[
+          {
+            group: "Auth",
+            endpoints: [
+              { method: "POST", path: "/api/auth/register", desc: "Create a new account" },
+              { method: "POST", path: "/api/auth/forgot-password", desc: "Request a password reset email" },
+              { method: "POST", path: "/api/auth/reset-password", desc: "Reset password with token" },
+              { method: "GET", path: "/api/auth/account", desc: "Get authenticated user profile" },
+              { method: "PATCH", path: "/api/auth/account", desc: "Update name, password, or social handles" },
+            ],
+          },
+          {
+            group: "Agents",
+            endpoints: [
+              { method: "POST", path: "/api/deploy", desc: "Deploy a new AI agent" },
+              { method: "GET", path: "/api/instances", desc: "List all your deployed agents" },
+              { method: "POST", path: "/api/instances/[id]/restart", desc: "Restart an agent" },
+              { method: "POST", path: "/api/instances/[id]/delete", desc: "Delete an agent" },
+            ],
+          },
+          {
+            group: "Billing",
+            endpoints: [
+              { method: "GET", path: "/api/billing", desc: "Get billing overview and cost summary" },
+              { method: "GET", path: "/api/subscriptions", desc: "List all subscriptions" },
+            ],
+          },
+          {
+            group: "Planner",
+            endpoints: [
+              { method: "POST", path: "/api/planner", desc: "Get agent recommendation for a use case (public)" },
+            ],
+          },
+        ].map((group) => (
+          <div key={group.group}>
+            <h4
+              className="text-[var(--accent-color)] text-xs uppercase tracking-widest mb-3"
+              style={{ fontFamily: "var(--font-mono)" }}
+            >
+              {group.group}
+            </h4>
+            <div className="space-y-2">
+              {group.endpoints.map((ep) => (
+                <div key={ep.path} className="flex items-start gap-3 border border-[var(--border-color)] p-3">
+                  <span
+                    className={`shrink-0 text-[0.65rem] font-bold px-2 py-0.5 uppercase ${
+                      ep.method === "GET"
+                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+                        : ep.method === "POST"
+                        ? "bg-blue-500/10 text-blue-400 border border-blue-500/30"
+                        : "bg-yellow-500/10 text-yellow-400 border border-yellow-500/30"
+                    }`}
+                    style={{ fontFamily: "var(--font-mono)" }}
+                  >
+                    {ep.method}
+                  </span>
+                  <div>
+                    <code className="text-[var(--text-primary)] text-xs" style={{ fontFamily: "var(--font-mono)" }}>
+                      {ep.path}
+                    </code>
+                    <p className="text-[var(--text-secondary)] text-xs mt-0.5">{ep.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    ),
+  },
+]
+
 export default function DocsPage() {
   return (
-    <div className="bg-[#0a0a0f] min-h-screen">
-      <div className="max-w-3xl mx-auto px-6 py-20">
-        <h1 className="text-4xl md:text-5xl font-bold text-white">Documentation</h1>
-        <p className="mt-4 text-zinc-400 text-lg">
-          Everything you need to get started with CopyBot Pro.
+    <div className="max-w-[1200px] mx-auto px-8 py-16">
+      {/* Header */}
+      <div className="border-l-4 border-[var(--accent-color)] pl-8 mb-16">
+        <div
+          className="text-[var(--accent-color)] text-xs uppercase tracking-widest mb-3 opacity-80"
+          style={{ fontFamily: "var(--font-mono)" }}
+        >
+          [ DOCS ]
+        </div>
+        <h1
+          className="text-[clamp(2.5rem,5vw,4rem)] font-bold uppercase tracking-[0.02em] text-[var(--text-primary)] mb-4"
+          style={{ fontFamily: "var(--font-display)" }}
+        >
+          Documentation
+        </h1>
+        <p className="text-[var(--text-secondary)] text-lg max-w-2xl">
+          Everything you need to deploy and manage AI agents on SovereignML.
         </p>
+      </div>
 
-        <section className="mt-16">
-          <h2 className="text-2xl font-bold text-white mb-4">Getting Started</h2>
-          <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 space-y-4">
-            <p className="text-zinc-400 text-sm leading-relaxed">
-              Getting started with CopyBot Pro is simple. Follow these steps to begin automated copy
-              trading:
-            </p>
-            <ol className="space-y-3 text-zinc-400 text-sm leading-relaxed list-decimal list-inside">
-              <li>Create an account by clicking &ldquo;Get Started&rdquo; and filling in your details.</li>
-              <li>
-                Choose a copy trading bot that matches your trading strategy and risk appetite.
-              </li>
-              <li>Complete the one-time $49 access payment via USDT (BEP20 network).</li>
-              <li>Submit your transaction ID (TXID) for verification.</li>
-              <li>Once verified, configure your bot settings and start trading.</li>
-            </ol>
-          </div>
-        </section>
-
-        <section className="mt-12">
-          <h2 className="text-2xl font-bold text-white mb-4">Payment Process</h2>
-          <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 space-y-4">
-            <p className="text-zinc-400 text-sm leading-relaxed">
-              All payments are processed using{" "}
-              <strong className="text-white">USDT on the BEP20 (Binance Smart Chain)</strong> network.
-              Here is how it works:
-            </p>
-            <div className="space-y-3 text-zinc-400 text-sm leading-relaxed">
-              <p>
-                <strong className="text-zinc-200">1. Payment Address:</strong> After selecting your bot,
-                you will be shown a USDT BEP20 wallet address. Send exactly the required amount to this
-                address.
-              </p>
-              <p>
-                <strong className="text-zinc-200">2. TXID Submission:</strong> After sending the payment,
-                copy the transaction hash (TXID) from your wallet or exchange and paste it into the
-                verification form on your dashboard.
-              </p>
-              <p>
-                <strong className="text-zinc-200">3. Verification:</strong> Our system automatically
-                verifies your transaction on the blockchain. This usually takes 5-30 minutes. You will be
-                notified once your payment is confirmed.
-              </p>
-              <p>
-                <strong className="text-zinc-200">4. Monthly Renewal:</strong> After your first month, the
-                subscription renews at $10/month. You will receive a reminder before each renewal is due.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <section className="mt-12">
-          <h2 className="text-2xl font-bold text-white mb-4">Bot Usage</h2>
-          <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 space-y-4">
-            <p className="text-zinc-400 text-sm leading-relaxed">
-              Once your payment is verified, you can configure and run your bot from the dashboard.
-            </p>
-            <div className="space-y-3 text-zinc-400 text-sm leading-relaxed">
-              <p>
-                <strong className="text-zinc-200">Risk Settings:</strong> Configure your maximum position
-                size, stop-loss percentage, and take-profit targets. We recommend starting with conservative
-                settings and adjusting as you become more comfortable.
-              </p>
-              <p>
-                <strong className="text-zinc-200">Expected Behavior:</strong> The bot mirrors trades from
-                top-performing strategies. It operates 24/7 and executes trades automatically based on the
-                signals it receives. Performance varies based on market conditions.
-              </p>
-              <p>
-                <strong className="text-zinc-200">Monitoring:</strong> Use the real-time analytics dashboard
-                to track your bot&apos;s performance, view trade history, and monitor your portfolio balance.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <section className="mt-12 pb-12" id="faq">
-          <h2 className="text-2xl font-bold text-white mb-6">Frequently Asked Questions</h2>
-          <div className="space-y-3">
-            {faqItems.map((item) => (
-              <FAQItem key={item.question} question={item.question} answer={item.answer} />
+      <div className="flex flex-col lg:flex-row gap-12">
+        {/* Sidebar nav */}
+        <aside className="lg:w-56 shrink-0">
+          <nav className="lg:sticky lg:top-[100px] space-y-1">
+            {sections.map((s) => (
+              <a
+                key={s.id}
+                href={`#${s.id}`}
+                className="flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--card-hover)] transition-colors border-l-2 border-transparent hover:border-[var(--accent-color)]"
+                style={{ fontFamily: "var(--font-mono)" }}
+              >
+                <s.icon className="w-4 h-4 shrink-0" />
+                {s.title}
+              </a>
             ))}
+            <a
+              href="#faq"
+              className="flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--card-hover)] transition-colors border-l-2 border-transparent hover:border-[var(--accent-color)]"
+              style={{ fontFamily: "var(--font-mono)" }}
+            >
+              <ChevronDown className="w-4 h-4 shrink-0" />
+              FAQ
+            </a>
+          </nav>
+        </aside>
+
+        {/* Content */}
+        <div className="flex-1 space-y-16 min-w-0">
+          {sections.map((s) => (
+            <section key={s.id} id={s.id} className="scroll-mt-[120px]">
+              <div className="flex items-center gap-3 mb-6 pb-4 border-b border-[var(--border-color)]">
+                <s.icon className="w-5 h-5 text-[var(--accent-color)]" />
+                <h2
+                  className="text-xl font-bold uppercase tracking-wide text-[var(--text-primary)]"
+                  style={{ fontFamily: "var(--font-display)" }}
+                >
+                  {s.title}
+                </h2>
+              </div>
+              {s.content}
+            </section>
+          ))}
+
+          {/* FAQ */}
+          <section id="faq" className="scroll-mt-[120px]">
+            <div className="flex items-center gap-3 mb-6 pb-4 border-b border-[var(--border-color)]">
+              <ChevronDown className="w-5 h-5 text-[var(--accent-color)]" />
+              <h2
+                className="text-xl font-bold uppercase tracking-wide text-[var(--text-primary)]"
+                style={{ fontFamily: "var(--font-display)" }}
+              >
+                FAQ
+              </h2>
+            </div>
+            <div className="space-y-3">
+              {faqItems.map((item) => (
+                <FAQItem key={item.question} question={item.question} answer={item.answer} />
+              ))}
+            </div>
+          </section>
+
+          {/* CTA */}
+          <div className="border border-[var(--accent-color)]/30 bg-[var(--accent-dim)] p-8 flex flex-col sm:flex-row items-center justify-between gap-6">
+            <div>
+              <p
+                className="text-[var(--accent-color)] text-xs uppercase tracking-widest mb-1"
+                style={{ fontFamily: "var(--font-mono)" }}
+              >
+                Ready?
+              </p>
+              <p className="text-[var(--text-primary)] font-bold text-lg" style={{ fontFamily: "var(--font-display)" }}>
+                Deploy your first AI agent now
+              </p>
+            </div>
+            <Link
+              href="/login?deploy=true"
+              className="btn-primary flex items-center gap-2 whitespace-nowrap"
+            >
+              Get Started <ArrowRight className="w-4 h-4" />
+            </Link>
           </div>
-        </section>
+        </div>
       </div>
     </div>
   )
