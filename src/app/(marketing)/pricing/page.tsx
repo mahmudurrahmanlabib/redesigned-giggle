@@ -1,20 +1,10 @@
 "use client"
 
 import Link from "next/link"
-import { motion } from "framer-motion"
 import { PLANS } from "@/configs/plans"
 import { AGENT_CATEGORIES } from "@/configs/agent-categories"
 import { BRANDING } from "@/configs/branding"
 import { Check, ArrowRight } from "lucide-react"
-
-const fadeUp = {
-  hidden: { opacity: 0, y: 20 },
-  visible: (i: number) => ({
-    opacity: 1,
-    y: 0,
-    transition: { delay: i * 0.15, duration: 0.8, ease: [0.25, 0.46, 0.45, 0.94] as const },
-  }),
-}
 
 const agentAccess: Record<string, Record<string, boolean>> = {
   starter: { automation: true, devops: false, support: true, research: false, content: false, sales: false, social: false, custom: false },
@@ -28,43 +18,29 @@ export default function PricingPage() {
       {/* Hero */}
       <section className="max-w-[1400px] mx-auto px-8 pb-16">
         <div className="max-w-[800px]">
-          <motion.h1
+          <h1
             className="text-[3.5rem] md:text-[4rem] font-bold uppercase tracking-[0.02em] leading-[1.1] text-[var(--text-primary)]"
             style={{ fontFamily: "var(--font-display)" }}
-            variants={fadeUp}
-            initial="hidden"
-            animate="visible"
-            custom={0}
           >
             Simple, <span className="text-[var(--accent-color)]">Transparent</span> Pricing
-          </motion.h1>
-          <motion.p
-            className="text-[var(--text-secondary)] text-lg"
-            variants={fadeUp}
-            initial="hidden"
-            animate="visible"
-            custom={1}
-          >
+          </h1>
+          <p className="text-[var(--text-secondary)] text-lg">
             Start small, scale as you grow. No hidden fees, cancel anytime.
-          </motion.p>
+          </p>
         </div>
       </section>
 
       {/* Plan Cards */}
       <section className="max-w-[1200px] mx-auto px-8 pb-20">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-0">
-          {PLANS.map((plan, i) => (
-            <motion.div
+          {PLANS.map((plan) => (
+            <div
               key={plan.slug}
               className={`relative p-8 transition-all duration-300 ${
                 plan.highlight
                   ? "border border-[var(--accent-color)] bg-[rgba(204,255,0,0.03)]"
                   : "border border-[var(--border-color)] bg-[var(--card-bg)]"
               } hover:bg-[var(--card-hover)]`}
-              variants={fadeUp}
-              initial="hidden"
-              animate="visible"
-              custom={i + 2}
             >
               {plan.highlight && (
                 <div className="absolute -top-3 left-6 bg-[var(--accent-color)] text-black font-[var(--font-mono)] text-xs font-bold uppercase tracking-widest px-3 py-1">
@@ -120,7 +96,7 @@ export default function PricingPage() {
                   Get Started
                 </Link>
               )}
-            </motion.div>
+            </div>
           ))}
         </div>
       </section>

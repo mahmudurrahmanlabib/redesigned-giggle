@@ -27,50 +27,56 @@ const TERMINAL_LINES = [
 export function TerminalAnimation() {
   const [lines, setLines] = useState<string[]>([])
   const containerRef = useRef<HTMLPreElement>(null)
-  const hasRun = useRef(false)
 
   useEffect(() => {
-    if (hasRun.current) return
-    hasRun.current = true
+    let alive = true
+    const timeouts: ReturnType<typeof setTimeout>[] = []
+    const schedule = (fn: () => void, ms: number) => {
+      const id = setTimeout(() => {
+        if (alive) fn()
+      }, ms)
+      timeouts.push(id)
+    }
 
     let currentLine = 0
     let currentChar = 0
     let currentText = ""
 
     function processLine() {
-      if (currentLine >= TERMINAL_LINES.length) return
+      if (!alive || currentLine >= TERMINAL_LINES.length) return
 
       const line = TERMINAL_LINES[currentLine]
 
       if (line.command && line.text.includes("user@sovereign")) {
-        // Type command character by character
-        if (currentChar === 0) {
-          currentText = ""
-        }
+        if (currentChar === 0) currentText = ""
         if (currentChar < line.text.length) {
-          currentText += line.text[currentChar]
+          currentText += line.text[currentChar]!
           currentChar++
-          setLines(prev => {
+          setLines((prev) => {
             const next = [...prev]
             next[currentLine] = currentText
             return next
           })
-          setTimeout(processLine, 30 + Math.random() * 50)
+          schedule(processLine, 30 + Math.random() * 50)
           return
         }
         currentChar = 0
         currentLine++
-        setTimeout(processLine, 400)
+        schedule(processLine, 400)
         return
       }
 
-      // Display entire line at once
-      setLines(prev => [...prev, line.text])
+      setLines((prev) => [...prev, line.text])
       currentLine++
-      setTimeout(processLine, line.delay)
+      schedule(processLine, line.delay)
     }
 
-    setTimeout(processLine, 1000)
+    schedule(processLine, 1000)
+
+    return () => {
+      alive = false
+      for (const id of timeouts) clearTimeout(id)
+    }
   }, [])
 
   useEffect(() => {
@@ -90,7 +96,7 @@ export function TerminalAnimation() {
       <div className="absolute top-0 left-0 w-full h-[20%] bg-gradient-to-b from-transparent via-[rgba(204,255,0,0.08)] to-transparent animate-[scanline_3s_linear_infinite] pointer-events-none z-10" />
       <pre
         ref={containerRef}
-        className="p-6 font-[var(--font-mono)] text-[0.8rem] text-[var(--accent-color)] whitespace-pre-wrap h-[400px] overflow-y-auto leading-relaxed"
+        className="p-4 sm:p-6 font-[var(--font-mono)] text-[0.7rem] sm:text-[0.8rem] text-[var(--accent-color)] whitespace-pre-wrap h-[min(400px,55vh)] sm:h-[400px] overflow-y-auto leading-relaxed"
       >
         {lines.map((line, i) => (
           <div key={i}>
