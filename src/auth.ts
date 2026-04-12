@@ -5,16 +5,22 @@ import { PrismaAdapter } from "@auth/prisma-adapter"
 import authConfig from "./auth.config"
 import { prisma } from "@/lib/prisma"
 import { verifyPassword } from "@/lib/password"
+import { isGoogleOAuthConfigured } from "@/lib/google-oauth"
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
+  trustHost: true,
   adapter: PrismaAdapter(prisma),
   providers: [
-    Google({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-      allowDangerousEmailAccountLinking: true,
-    }),
+    ...(isGoogleOAuthConfigured()
+      ? [
+          Google({
+            clientId: process.env.GOOGLE_CLIENT_ID ?? process.env.AUTH_GOOGLE_ID!,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? process.env.AUTH_GOOGLE_SECRET!,
+            allowDangerousEmailAccountLinking: true,
+          }),
+        ]
+      : []),
     Credentials({
       credentials: {
         email: { label: "Email", type: "email" },

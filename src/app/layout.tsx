@@ -1,5 +1,6 @@
 import type { Metadata } from "next"
 import { Rajdhani, Outfit, Space_Mono } from "next/font/google"
+import { AppProviders } from "@/components/app-providers"
 import { Toaster } from "@/components/ui/sonner"
 import "./globals.css"
 
@@ -34,7 +35,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${rajdhani.variable} ${outfit.variable} ${spaceMono.variable} dark h-full antialiased`}>
       <body className="min-h-full flex flex-col">
-        {children}
+        <AppProviders>{children}</AppProviders>
         <Toaster />
       </body>
     </html>
