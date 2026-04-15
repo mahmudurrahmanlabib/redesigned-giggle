@@ -50,110 +50,92 @@
   --radius-4xl: 0;
 }
 
-:root {
+/* ─── Dark Mode ─────────────────────────────────────────────────── */
+:root,
+.dark {
   --bg-color: #030303;
-  --bg-secondary: #0F0F0F;
+  --bg-secondary: #0a0a0a;
   --text-primary: #EDEDED;
-  --text-secondary: #888888;
+  --text-secondary: #9ca3af;
   --accent-color: #CCFF00;
   --accent-dim: rgba(204, 255, 0, 0.1);
-  --accent-glow: rgba(204, 255, 0, 0.3);
-  --border-color: #333;
-  --card-bg: #0A0A0A;
-  --card-hover: #111;
+  --accent-glow: rgba(204, 255, 0, 0.25);
+  --border-color: #27272a;
+  --card-bg: #0a0a0a;
+  --card-hover: #141414;
+  --grid-line: rgba(237, 237, 237, 0.04);
+  --grid-line-alt: rgba(237, 237, 237, 0.03);
+  --grid-through-alt-bg: rgba(10, 10, 10, 0.88);
+  --nav-bg: rgba(3, 3, 3, 0.85);
+  --nav-border: rgba(237, 237, 237, 0.08);
+  --card-bg-translucent: rgba(10, 10, 10, 0.6);
+  --card-hover-translucent: rgba(20, 20, 20, 0.8);
+  --card-shadow: rgba(0, 0, 0, 0.5);
+  --code-bg: #050505;
+  --mobile-menu-bg: #030303;
+  --selection-bg: rgba(204, 255, 0, 0.3);
+  --selection-color: #030303;
 
   --background: #030303;
   --foreground: #EDEDED;
-  --card: #0A0A0A;
+  --card: #0a0a0a;
   --card-foreground: #EDEDED;
-  --popover: #0A0A0A;
+  --popover: #0a0a0a;
   --popover-foreground: #EDEDED;
   --primary: #CCFF00;
-  --primary-foreground: #000000;
-  --secondary: #0F0F0F;
+  --primary-foreground: #030303;
+  --secondary: #0a0a0a;
   --secondary-foreground: #EDEDED;
-  --muted: #0F0F0F;
-  --muted-foreground: #888888;
-  --accent: #0F0F0F;
+  --muted: #0a0a0a;
+  --muted-foreground: #9ca3af;
+  --accent: #0a0a0a;
   --accent-foreground: #EDEDED;
-  --destructive: #ff5f56;
-  --border: #333;
-  --input: #333;
+  --destructive: #ef4444;
+  --border: #27272a;
+  --input: #27272a;
   --ring: #CCFF00;
   --chart-1: #CCFF00;
-  --chart-2: #888888;
-  --chart-3: #555555;
-  --chart-4: #333333;
-  --chart-5: #1a1a1a;
+  --chart-2: #ffc091;
+  --chart-3: #ffd11a;
+  --chart-4: #9ca3af;
+  --chart-5: #27272a;
   --radius: 0;
-  --sidebar: #0A0A0A;
+  --sidebar: #0a0a0a;
   --sidebar-foreground: #EDEDED;
   --sidebar-primary: #CCFF00;
-  --sidebar-primary-foreground: #000000;
-  --sidebar-accent: #0F0F0F;
+  --sidebar-primary-foreground: #030303;
+  --sidebar-accent: #0a0a0a;
   --sidebar-accent-foreground: #EDEDED;
-  --sidebar-border: #333;
-  --sidebar-ring: #CCFF00;
-}
-
-.dark {
-  --background: #030303;
-  --foreground: #EDEDED;
-  --card: #0A0A0A;
-  --card-foreground: #EDEDED;
-  --popover: #0A0A0A;
-  --popover-foreground: #EDEDED;
-  --primary: #CCFF00;
-  --primary-foreground: #000000;
-  --secondary: #0F0F0F;
-  --secondary-foreground: #EDEDED;
-  --muted: #0F0F0F;
-  --muted-foreground: #888888;
-  --accent: #0F0F0F;
-  --accent-foreground: #EDEDED;
-  --destructive: #ff5f56;
-  --border: #333;
-  --input: #333;
-  --ring: #CCFF00;
-  --chart-1: #CCFF00;
-  --chart-2: #888888;
-  --chart-3: #555555;
-  --chart-4: #333333;
-  --chart-5: #1a1a1a;
-  --sidebar: #0A0A0A;
-  --sidebar-foreground: #EDEDED;
-  --sidebar-primary: #CCFF00;
-  --sidebar-primary-foreground: #000000;
-  --sidebar-accent: #0F0F0F;
-  --sidebar-accent-foreground: #EDEDED;
-  --sidebar-border: #333;
+  --sidebar-border: #27272a;
   --sidebar-ring: #CCFF00;
 }
 
 /* ─── Grid Pattern Background ───────────────────────────────────── */
 body {
+  background-color: var(--bg-color);
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
   background-size: 50px 50px;
   background-attachment: fixed;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 /* Ensure alternating sections keep grid visible */
 .grid-through {
   background-color: transparent !important;
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
   background-size: 50px 50px;
   background-attachment: fixed;
 }
 
 .grid-through-alt {
-  background-color: rgba(15, 15, 15, 0.85) !important;
+  background-color: var(--grid-through-alt-bg) !important;
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    linear-gradient(var(--grid-line-alt) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line-alt) 1px, transparent 1px);
   background-size: 50px 50px;
   background-attachment: fixed;
 }
@@ -174,7 +156,7 @@ body::before {
   width: 4px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--bg-color);
+  background: var(--bg-secondary);
 }
 ::-webkit-scrollbar-thumb {
   background: var(--accent-color);
@@ -182,8 +164,8 @@ body::before {
 
 /* ─── Selection ─────────────────────────────────────────────────── */
 ::selection {
-  background: rgba(204, 255, 0, 0.3);
-  color: #000;
+  background: var(--selection-bg);
+  color: var(--selection-color);
 }
 
 /* ─── Terminal Button System ────────────────────────────────────── */
@@ -223,9 +205,9 @@ body::before {
 }
 
 .btn-primary:hover {
-  background-color: #fff;
-  border-color: #fff;
-  box-shadow: 0 0 30px rgba(255, 255, 255, 0.2);
+  background-color: var(--text-primary);
+  border-color: var(--text-primary);
+  box-shadow: 0 0 30px var(--accent-dim);
   transform: translateY(-2px);
 }
 
@@ -254,7 +236,7 @@ body::before {
 
 /* ─── Card System ───────────────────────────────────────────────── */
 .card-terminal {
-  background: rgba(10, 10, 10, 0.6);
+  background: var(--card-bg-translucent);
   border: 1px solid var(--border-color);
   position: relative;
   transition: all 0.3s ease;
@@ -286,12 +268,12 @@ body::before {
 }
 
 .card-static {
-  background: rgba(10, 10, 10, 0.6);
+  background: var(--card-bg-translucent);
   border: 1px solid var(--border-color);
 }
 
 .card-popular-terminal {
-  background: rgba(10, 10, 10, 0.6);
+  background: var(--card-bg-translucent);
   border: 1px solid var(--accent-color);
   position: relative;
   box-shadow: 0 0 20px var(--accent-dim);

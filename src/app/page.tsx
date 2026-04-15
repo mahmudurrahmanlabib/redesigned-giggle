@@ -12,6 +12,7 @@ import { AgentCategoryCard } from "@/components/marketing/agent-category-card"
 import { SmartPlanner } from "@/components/marketing/smart-planner"
 import { DemoBooking } from "@/components/marketing/demo-booking"
 import { UpgradePath } from "@/components/marketing/upgrade-path"
+import { PlaygroundWidget } from "@/components/marketing/playground-widget"
 import {
   Rocket,
   Shield,
@@ -240,7 +241,7 @@ export default function Home() {
                 return (
                   <div
                     key={f.marker}
-                    className="group relative border border-[var(--border-color)] bg-[rgba(10,10,10,0.6)] p-6 min-h-[220px] flex flex-col justify-end transition-all duration-300 hover:border-[var(--accent-color)] hover:bg-[rgba(20,20,20,0.8)] hover:-translate-y-1 hover:shadow-[0_10px_30px_rgba(0,0,0,0.5)]"
+                    className="group relative border border-[var(--border-color)] bg-[var(--card-bg-translucent)] p-6 min-h-[220px] flex flex-col justify-end transition-all duration-300 hover:border-[var(--accent-color)] hover:bg-[var(--card-hover-translucent)] hover:-translate-y-1 hover:shadow-[0_10px_30px_var(--card-shadow)]"
                   >
                     <div className="absolute top-0 left-0 w-full h-[2px] bg-[var(--accent-color)] scale-x-0 origin-left transition-transform duration-300 group-hover:scale-x-100" />
                     <div className="absolute top-3 right-3 font-[var(--font-mono)] text-[0.65rem] text-[var(--text-secondary)] opacity-40">
@@ -439,6 +440,7 @@ export default function Home() {
         </section>
       </main>
       <Footer />
+      <PlaygroundWidget />
     </>
   )
 }

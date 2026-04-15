@@ -28,7 +28,7 @@ export function AgentCategoryCard({ category }: { category: AgentCategory }) {
 
   return (
     <div
-      className="group relative border border-[var(--border-color)] bg-[rgba(10,10,10,0.6)] p-6 transition-all duration-300 hover:border-[var(--accent-color)] hover:bg-[rgba(20,20,20,0.8)] hover:-translate-y-1 hover:shadow-[0_10px_30px_rgba(0,0,0,0.5)] cursor-pointer"
+      className="group relative border border-[var(--border-color)] bg-[var(--card-bg-translucent)] p-6 transition-all duration-300 hover:border-[var(--accent-color)] hover:bg-[var(--card-hover-translucent)] hover:-translate-y-1 hover:shadow-[0_10px_30px_var(--card-shadow)] cursor-pointer"
     >
       <div className="absolute top-0 left-0 w-full h-[2px] bg-[var(--accent-color)] scale-x-0 origin-left transition-transform duration-300 group-hover:scale-x-100" />
 

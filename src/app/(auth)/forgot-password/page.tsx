@@ -43,10 +43,10 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <Card className="w-full bg-white/5 backdrop-blur-xl border-white/10">
+    <Card className="w-full bg-[var(--card-bg)] backdrop-blur-xl border-[var(--border-color)]">
       <CardHeader className="text-center pb-4 pt-8 px-8">
-        <CardTitle className="text-2xl font-bold text-white">Forgot Password</CardTitle>
-        <CardDescription className="text-zinc-400">
+        <CardTitle className="text-2xl font-bold text-[var(--text-primary)]">Forgot Password</CardTitle>
+        <CardDescription className="text-[var(--text-secondary)]">
           Enter your email and we&apos;ll send you a reset link
         </CardDescription>
       </CardHeader>
@@ -63,20 +63,20 @@ export default function ForgotPasswordPage() {
             </div>
           )}
           <div className="space-y-2">
-            <Label htmlFor="email" className="text-zinc-300">Email</Label>
+            <Label htmlFor="email" className="text-[var(--text-primary)]">Email</Label>
             <Input
               id="email"
               name="email"
               type="email"
               placeholder="you@example.com"
               required
-              className="bg-white/5 border-white/10 text-white placeholder:text-zinc-500"
+              className="bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
             />
           </div>
           <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700" disabled={loading}>
             {loading ? "Sending..." : "Send Reset Link"}
           </Button>
-          <p className="text-center text-sm text-zinc-400">
+          <p className="text-center text-sm text-[var(--text-secondary)]">
             Remember your password?{" "}
             <Link href="/login" className="text-blue-400 hover:text-blue-300">
               Sign in

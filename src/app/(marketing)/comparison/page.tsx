@@ -147,7 +147,7 @@ export default function ComparisonPage() {
               whileInView="visible"
               viewport={{ once: true }}
               custom={i}
-              className="border border-[var(--border-color)] bg-[rgba(10,10,10,0.6)] p-8 transition-all duration-300 hover:border-[var(--accent-color)] hover:-translate-y-1"
+              className="border border-[var(--border-color)] bg-[var(--card-bg-translucent)] p-8 transition-all duration-300 hover:border-[var(--accent-color)] hover:-translate-y-1"
             >
               <h3
                 className="text-xl font-bold uppercase tracking-wide text-[var(--accent-color)] mb-4"

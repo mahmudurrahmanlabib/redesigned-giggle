@@ -169,11 +169,11 @@ export default function AccountPage() {
     return (
       <div className="space-y-8 max-w-2xl">
         <div>
-          <h1 className="text-2xl font-bold text-white">Account Settings</h1>
-          <p className="text-zinc-400 mt-1">Manage your profile and security</p>
+          <h1 className="text-2xl font-bold text-[var(--text-primary)]">Account Settings</h1>
+          <p className="text-[var(--text-secondary)] mt-1">Manage your profile and security</p>
         </div>
-        <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
-          <p className="text-zinc-400">Loading...</p>
+        <div className="bg-[var(--card-bg)] backdrop-blur-xl border border-[var(--border-color)] rounded-2xl p-6">
+          <p className="text-[var(--text-secondary)]">Loading...</p>
         </div>
       </div>
     )
@@ -183,10 +183,10 @@ export default function AccountPage() {
     return (
       <div className="space-y-8 max-w-2xl">
         <div>
-          <h1 className="text-2xl font-bold text-white">Account Settings</h1>
-          <p className="text-zinc-400 mt-1">Manage your profile and security</p>
+          <h1 className="text-2xl font-bold text-[var(--text-primary)]">Account Settings</h1>
+          <p className="text-[var(--text-secondary)] mt-1">Manage your profile and security</p>
         </div>
-        <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+        <div className="bg-[var(--card-bg)] backdrop-blur-xl border border-[var(--border-color)] rounded-2xl p-6">
           <p className="text-red-400">Failed to load account data.</p>
         </div>
       </div>
@@ -196,19 +196,19 @@ export default function AccountPage() {
   return (
     <div className="space-y-8 max-w-2xl">
       <div>
-        <h1 className="text-2xl font-bold text-white">Account Settings</h1>
-        <p className="text-zinc-400 mt-1">Manage your profile and security</p>
+        <h1 className="text-2xl font-bold text-[var(--text-primary)]">Account Settings</h1>
+        <p className="text-[var(--text-secondary)] mt-1">Manage your profile and security</p>
       </div>
 
       {/* Profile Section */}
-      <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-white">Profile</h2>
+      <div className="bg-[var(--card-bg)] backdrop-blur-xl border border-[var(--border-color)] rounded-2xl p-6 space-y-4">
+        <h2 className="text-lg font-semibold text-[var(--text-primary)]">Profile</h2>
         <div className="space-y-2">
-          <Label className="text-zinc-400 text-sm">Display Name</Label>
+          <Label className="text-[var(--text-secondary)] text-sm">Display Name</Label>
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="bg-white/5 border-white/10 text-white"
+            className="bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--text-primary)]"
             placeholder="Your name"
           />
         </div>
@@ -224,63 +224,63 @@ export default function AccountPage() {
       </div>
 
       {/* Security Section */}
-      <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-white">Security</h2>
+      <div className="bg-[var(--card-bg)] backdrop-blur-xl border border-[var(--border-color)] rounded-2xl p-6 space-y-4">
+        <h2 className="text-lg font-semibold text-[var(--text-primary)]">Security</h2>
         {account.hasPassword ? (
           <>
             <div className="space-y-2">
-              <Label className="text-zinc-400 text-sm">Current Password</Label>
+              <Label className="text-[var(--text-secondary)] text-sm">Current Password</Label>
               <Input
                 type="password"
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
-                className="bg-white/5 border-white/10 text-white"
+                className="bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--text-primary)]"
                 placeholder="Enter current password"
               />
             </div>
             <div className="space-y-2">
-              <Label className="text-zinc-400 text-sm">New Password</Label>
+              <Label className="text-[var(--text-secondary)] text-sm">New Password</Label>
               <Input
                 type="password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                className="bg-white/5 border-white/10 text-white"
+                className="bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--text-primary)]"
                 placeholder="Enter new password"
               />
             </div>
             <div className="space-y-2">
-              <Label className="text-zinc-400 text-sm">Confirm New Password</Label>
+              <Label className="text-[var(--text-secondary)] text-sm">Confirm New Password</Label>
               <Input
                 type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                className="bg-white/5 border-white/10 text-white"
+                className="bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--text-primary)]"
                 placeholder="Confirm new password"
               />
             </div>
           </>
         ) : (
           <>
-            <p className="text-zinc-400 text-sm">
+            <p className="text-[var(--text-secondary)] text-sm">
               You signed up with Google and don&apos;t have a password yet. Set one to enable email/password login.
             </p>
             <div className="space-y-2">
-              <Label className="text-zinc-400 text-sm">New Password</Label>
+              <Label className="text-[var(--text-secondary)] text-sm">New Password</Label>
               <Input
                 type="password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                className="bg-white/5 border-white/10 text-white"
+                className="bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--text-primary)]"
                 placeholder="Enter new password"
               />
             </div>
             <div className="space-y-2">
-              <Label className="text-zinc-400 text-sm">Confirm Password</Label>
+              <Label className="text-[var(--text-secondary)] text-sm">Confirm Password</Label>
               <Input
                 type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                className="bg-white/5 border-white/10 text-white"
+                className="bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--text-primary)]"
                 placeholder="Confirm password"
               />
             </div>
@@ -298,32 +298,32 @@ export default function AccountPage() {
       </div>
 
       {/* Contact & Socials */}
-      <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-white">Contact & Socials</h2>
+      <div className="bg-[var(--card-bg)] backdrop-blur-xl border border-[var(--border-color)] rounded-2xl p-6 space-y-4">
+        <h2 className="text-lg font-semibold text-[var(--text-primary)]">Contact & Socials</h2>
         <div className="space-y-2">
-          <Label className="text-zinc-400 text-sm">Telegram</Label>
+          <Label className="text-[var(--text-secondary)] text-sm">Telegram</Label>
           <Input
             value={telegramId}
             onChange={(e) => setTelegramId(e.target.value)}
-            className="bg-white/5 border-white/10 text-white"
+            className="bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--text-primary)]"
             placeholder="@username"
           />
         </div>
         <div className="space-y-2">
-          <Label className="text-zinc-400 text-sm">Twitter / X</Label>
+          <Label className="text-[var(--text-secondary)] text-sm">Twitter / X</Label>
           <Input
             value={twitterHandle}
             onChange={(e) => setTwitterHandle(e.target.value)}
-            className="bg-white/5 border-white/10 text-white"
+            className="bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--text-primary)]"
             placeholder="@handle"
           />
         </div>
         <div className="space-y-2">
-          <Label className="text-zinc-400 text-sm">Discord</Label>
+          <Label className="text-[var(--text-secondary)] text-sm">Discord</Label>
           <Input
             value={discordId}
             onChange={(e) => setDiscordId(e.target.value)}
-            className="bg-white/5 border-white/10 text-white"
+            className="bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--text-primary)]"
             placeholder="username#1234"
           />
         </div>
@@ -339,11 +339,11 @@ export default function AccountPage() {
       </div>
 
       {/* Connected Accounts */}
-      <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-white">Connected Accounts</h2>
+      <div className="bg-[var(--card-bg)] backdrop-blur-xl border border-[var(--border-color)] rounded-2xl p-6 space-y-4">
+        <h2 className="text-lg font-semibold text-[var(--text-primary)]">Connected Accounts</h2>
         <div className="flex items-center gap-3">
           {account.hasGoogle ? (
-            <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white">
+            <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--card-bg)] border border-[var(--border-color)] text-sm text-[var(--text-primary)]">
               <svg className="w-4 h-4" viewBox="0 0 24 24">
                 <path
                   fill="currentColor"
@@ -365,22 +365,73 @@ export default function AccountPage() {
               Google Connected
             </span>
           ) : (
-            <p className="text-zinc-400 text-sm">No connected accounts</p>
+            <p className="text-[var(--text-secondary)] text-sm">No connected accounts</p>
           )}
         </div>
       </div>
 
+      {/* Two-Factor */}
+      <div className="bg-[var(--card-bg)] backdrop-blur-xl border border-[var(--border-color)] rounded-2xl p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-[var(--text-primary)]">Two-Factor Authentication</h2>
+            <p className="text-[var(--text-secondary)] text-sm mt-1">Add an extra layer of security via TOTP app.</p>
+          </div>
+          <span className="text-[10px] uppercase tracking-[0.08em] font-mono px-2 py-0.5 border border-[var(--border-color)] text-[var(--text-secondary)]">
+            disabled
+          </span>
+        </div>
+        <Button className="bg-blue-600 hover:bg-blue-700">Enable 2FA</Button>
+        <p className="text-[10px] font-mono text-amber-400/80">⚠ TOTP enrollment + backup codes pending</p>
+      </div>
+
+      {/* Active Sessions */}
+      <div className="bg-[var(--card-bg)] backdrop-blur-xl border border-[var(--border-color)] rounded-2xl p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-[var(--text-primary)]">Active Sessions</h2>
+          <button className="text-xs uppercase tracking-[0.08em] font-mono text-red-400 hover:underline">
+            Sign out all
+          </button>
+        </div>
+        <div className="space-y-2">
+          {[
+            { device: "MacBook Pro · Chrome", ip: "73.210.x.x", loc: "Brooklyn, US", current: true, last: "now" },
+            { device: "iPhone · Safari", ip: "73.210.x.x", loc: "Brooklyn, US", current: false, last: "3h ago" },
+            { device: "Linux · Firefox", ip: "51.158.x.x", loc: "Paris, FR", current: false, last: "2 days ago" },
+          ].map((s, i) => (
+            <div key={i} className="flex items-center justify-between py-2 border-b border-[var(--border-color)]/50 last:border-b-0">
+              <div>
+                <p className="text-sm text-[var(--text-primary)]">{s.device}</p>
+                <p className="text-[10px] font-mono text-[var(--text-secondary)]">
+                  {s.ip} · {s.loc} · {s.last}
+                </p>
+              </div>
+              {s.current ? (
+                <span className="text-[10px] uppercase tracking-[0.08em] font-mono text-[var(--accent-color)] border border-[var(--accent-color)]/40 px-2 py-0.5">
+                  current
+                </span>
+              ) : (
+                <button className="text-xs uppercase tracking-[0.08em] font-mono text-red-400 hover:underline">
+                  Revoke
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+        <p className="text-[10px] font-mono text-amber-400/80">⚠ session store pending</p>
+      </div>
+
       {/* Account Info */}
-      <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-white">Account Info</h2>
+      <div className="bg-[var(--card-bg)] backdrop-blur-xl border border-[var(--border-color)] rounded-2xl p-6 space-y-4">
+        <h2 className="text-lg font-semibold text-[var(--text-primary)]">Account Info</h2>
         <div className="space-y-3">
           <div>
-            <Label className="text-zinc-400 text-sm">Email</Label>
-            <p className="text-white mt-1">{account.email}</p>
+            <Label className="text-[var(--text-secondary)] text-sm">Email</Label>
+            <p className="text-[var(--text-primary)] mt-1">{account.email}</p>
           </div>
           <div>
-            <Label className="text-zinc-400 text-sm">Member Since</Label>
-            <p className="text-white mt-1">
+            <Label className="text-[var(--text-secondary)] text-sm">Member Since</Label>
+            <p className="text-[var(--text-primary)] mt-1">
               {new Date(account.createdAt).toLocaleDateString("en-US", {
                 year: "numeric",
                 month: "long",
@@ -389,6 +440,18 @@ export default function AccountPage() {
             </p>
           </div>
         </div>
+      </div>
+
+      {/* Delete Account */}
+      <div className="border border-red-500/30 bg-red-500/5 rounded-2xl p-6 space-y-3">
+        <h2 className="text-lg font-semibold text-red-400">Delete Account</h2>
+        <p className="text-[var(--text-secondary)] text-sm">
+          Permanently delete your account, all agents, subscriptions, and data. This cannot be undone.
+        </p>
+        <button className="px-4 py-2 text-xs uppercase tracking-[0.08em] font-mono bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20">
+          Delete Account
+        </button>
+        <p className="text-[10px] font-mono text-amber-400/80">⚠ deletion workflow + grace period pending</p>
       </div>
     </div>
   )

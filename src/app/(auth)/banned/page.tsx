@@ -8,21 +8,21 @@ export default function BannedPage() {
           <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
         </svg>
       </div>
-      <h1 className="text-2xl font-bold text-white">Account Suspended</h1>
-      <p className="text-zinc-400 leading-relaxed">
+      <h1 className="text-2xl font-bold text-[var(--text-primary)]">Account Suspended</h1>
+      <p className="text-[var(--text-secondary)] leading-relaxed">
         Your account has been suspended. If you believe this is a mistake,
         please contact our support team for assistance.
       </p>
       <div className="flex flex-col gap-3 pt-2">
         <Link
           href="/community"
-          className="bg-blue-600 hover:bg-blue-500 text-white font-medium px-6 py-3 rounded-xl transition-colors text-sm"
+          className="bg-blue-600 hover:bg-blue-500 text-[var(--text-primary)] font-medium px-6 py-3 rounded-xl transition-colors text-sm"
         >
           Contact Support
         </Link>
         <Link
           href="/"
-          className="text-zinc-500 hover:text-zinc-300 text-sm transition-colors"
+          className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-sm transition-colors"
         >
           Back to Home
         </Link>

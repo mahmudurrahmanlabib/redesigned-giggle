@@ -7,9 +7,9 @@ import Link from "next/link"
 const STATUS_STYLES: Record<string, string> = {
   running: "bg-[var(--accent-dim)] text-[var(--accent-color)] border-[var(--accent-color)]/30",
   provisioning: "bg-amber-500/10 text-amber-400 border-amber-500/30",
-  stopped: "bg-white/5 text-[var(--text-secondary)] border-[var(--border-color)]",
+  stopped: "bg-[var(--card-bg)] text-[var(--text-secondary)] border-[var(--border-color)]",
   failed: "bg-red-500/10 text-red-400 border-red-500/30",
-  deleted: "bg-white/5 text-[var(--text-secondary)]/50 border-[var(--border-color)]",
+  deleted: "bg-[var(--card-bg)] text-[var(--text-secondary)]/50 border-[var(--border-color)]",
 }
 
 export default async function DashboardPage() {
@@ -48,11 +48,12 @@ export default async function DashboardPage() {
         </Link>
       </div>
 
-      <div className="grid gap-0 sm:grid-cols-3">
+      <div className="grid gap-0 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          { label: "Active Instances", value: activeInstances, accent: true },
-          { label: "Total Instances", value: instances.length, accent: false },
-          { label: "Active Subscriptions", value: activeSubs, accent: false },
+          { label: "Active Agents", value: activeInstances.toString(), accent: true, hint: `of ${instances.length} total` },
+          { label: "Credits Remaining", value: "12,480", accent: false, hint: "~3.2k requests left", dummy: true },
+          { label: "Monthly Spend", value: "$94.20", accent: false, hint: "across " + activeSubs + " subs" },
+          { label: "Incidents 24h", value: "0", accent: false, hint: "all systems up", dummy: true },
         ].map((stat) => (
           <div key={stat.label} className="border border-[var(--border-color)] bg-[var(--card-bg)] p-6">
             <p className="text-xs text-[var(--text-secondary)] uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-mono)" }}>
@@ -64,8 +65,39 @@ export default async function DashboardPage() {
             >
               {stat.value}
             </p>
+            <p className="text-[10px] font-mono text-[var(--text-secondary)] mt-1">
+              {stat.hint}{stat.dummy ? " ·" : ""}
+              {stat.dummy && <span className="text-amber-400/80"> dummy</span>}
+            </p>
           </div>
         ))}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Link
+          href="/dashboard/deploy"
+          className="border border-[var(--border-color)] bg-[var(--card-bg)] p-5 hover:border-[var(--accent-color)] transition-colors"
+        >
+          <p className="text-[10px] uppercase tracking-[0.1em] font-mono text-[var(--accent-color)]">Quick Action</p>
+          <p className="text-lg font-bold text-[var(--text-primary)] mt-2">Deploy new agent →</p>
+          <p className="text-xs text-[var(--text-secondary)] mt-1">From template or scratch</p>
+        </Link>
+        <Link
+          href="/dashboard/monitoring"
+          className="border border-[var(--border-color)] bg-[var(--card-bg)] p-5 hover:border-[var(--accent-color)] transition-colors"
+        >
+          <p className="text-[10px] uppercase tracking-[0.1em] font-mono text-[var(--accent-color)]">Health</p>
+          <p className="text-lg font-bold text-[var(--text-primary)] mt-2">Monitoring →</p>
+          <p className="text-xs text-[var(--text-secondary)] mt-1">Uptime + latency across agents</p>
+        </Link>
+        <Link
+          href="/dashboard/billing"
+          className="border border-[var(--border-color)] bg-[var(--card-bg)] p-5 hover:border-[var(--accent-color)] transition-colors"
+        >
+          <p className="text-[10px] uppercase tracking-[0.1em] font-mono text-[var(--accent-color)]">Billing</p>
+          <p className="text-lg font-bold text-[var(--text-primary)] mt-2">Credits & invoices →</p>
+          <p className="text-xs text-[var(--text-secondary)] mt-1">Top up or download invoices</p>
+        </Link>
       </div>
 
       <div>

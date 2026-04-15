@@ -119,7 +119,7 @@ export function TerminalAnimation() {
 
   return (
     <div
-      className="relative border border-[var(--border-color)] bg-[#050505] overflow-hidden"
+      className="relative border border-[var(--border-color)] bg-[var(--code-bg)] overflow-hidden"
       style={{
         clipPath:
           "polygon(20px 0, 100% 0, 100% calc(100% - 20px), calc(100% - 20px) 100%, 0 100%, 0 20px)",

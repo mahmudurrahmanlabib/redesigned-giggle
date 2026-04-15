@@ -42,10 +42,10 @@ export function RegisterForm({ showGoogleOAuth = false }: { showGoogleOAuth?: bo
   }
 
   return (
-    <Card className="w-full bg-white/5 backdrop-blur-xl border-white/10">
+    <Card className="w-full bg-[var(--card-bg)] backdrop-blur-xl border-[var(--border-color)]">
       <CardHeader className="text-center pb-4 pt-8 px-8">
-        <CardTitle className="text-2xl font-bold text-white">Create Account</CardTitle>
-        <CardDescription className="text-zinc-400">
+        <CardTitle className="text-2xl font-bold text-[var(--text-primary)]">Create Account</CardTitle>
+        <CardDescription className="text-[var(--text-secondary)]">
           Get started with your trading bot subscription
         </CardDescription>
       </CardHeader>
@@ -54,7 +54,7 @@ export function RegisterForm({ showGoogleOAuth = false }: { showGoogleOAuth?: bo
           <form action={signInWithGoogle}>
             <button
               type="submit"
-              className="w-full border border-white/10 bg-white/5 hover:bg-white/10 text-white py-3 rounded-xl flex items-center justify-center gap-3 transition-colors"
+              className="w-full border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-white/10 text-[var(--text-primary)] py-3 rounded-xl flex items-center justify-center gap-3 transition-colors"
             >
               <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
                 <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
@@ -70,10 +70,10 @@ export function RegisterForm({ showGoogleOAuth = false }: { showGoogleOAuth?: bo
         {showGoogleOAuth && (
         <div className="relative my-6">
           <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-white/10"></div>
+            <div className="w-full border-t border-[var(--border-color)]"></div>
           </div>
           <div className="relative flex justify-center text-xs">
-            <span className="bg-[#06060b] px-3 text-zinc-500">or</span>
+            <span className="bg-[var(--card-bg)] px-3 text-[var(--text-secondary)]">or</span>
           </div>
         </div>
         )}
@@ -85,7 +85,7 @@ export function RegisterForm({ showGoogleOAuth = false }: { showGoogleOAuth?: bo
             </div>
           )}
           <div className="space-y-2">
-            <Label htmlFor="name" className="text-zinc-300">Name</Label>
+            <Label htmlFor="name" className="text-[var(--text-primary)]">Name</Label>
             <Input
               id="name"
               name="name"
@@ -93,22 +93,22 @@ export function RegisterForm({ showGoogleOAuth = false }: { showGoogleOAuth?: bo
               placeholder="John Doe"
               required
               minLength={2}
-              className="bg-white/5 border-white/10 text-white placeholder:text-zinc-500"
+              className="bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/50"
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="email" className="text-zinc-300">Email</Label>
+            <Label htmlFor="email" className="text-[var(--text-primary)]">Email</Label>
             <Input
               id="email"
               name="email"
               type="email"
               placeholder="you@example.com"
               required
-              className="bg-white/5 border-white/10 text-white placeholder:text-zinc-500"
+              className="bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/50"
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="password" className="text-zinc-300">Password</Label>
+            <Label htmlFor="password" className="text-[var(--text-primary)]">Password</Label>
             <Input
               id="password"
               name="password"
@@ -116,13 +116,13 @@ export function RegisterForm({ showGoogleOAuth = false }: { showGoogleOAuth?: bo
               placeholder="••••••••"
               required
               minLength={6}
-              className="bg-white/5 border-white/10 text-white placeholder:text-zinc-500"
+              className="bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/50"
             />
           </div>
           <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700" disabled={loading}>
             {loading ? "Creating account..." : "Create Account"}
           </Button>
-          <p className="text-center text-sm text-zinc-400">
+          <p className="text-center text-sm text-[var(--text-secondary)]">
             Already have an account?{" "}
             <Link href="/login" className="text-blue-400 hover:text-blue-300">
               Sign in

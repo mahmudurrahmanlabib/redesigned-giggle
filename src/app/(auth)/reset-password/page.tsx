@@ -19,10 +19,10 @@ function ResetPasswordForm() {
 
   if (!token || !email) {
     return (
-      <Card className="w-full bg-white/5 backdrop-blur-xl border-white/10">
+      <Card className="w-full bg-[var(--card-bg)] backdrop-blur-xl border-[var(--border-color)]">
         <CardHeader className="text-center pb-4 pt-8 px-8">
-          <CardTitle className="text-2xl font-bold text-white">Invalid Link</CardTitle>
-          <CardDescription className="text-zinc-400">
+          <CardTitle className="text-2xl font-bold text-[var(--text-primary)]">Invalid Link</CardTitle>
+          <CardDescription className="text-[var(--text-secondary)]">
             This password reset link is invalid or has expired.
           </CardDescription>
         </CardHeader>
@@ -80,10 +80,10 @@ function ResetPasswordForm() {
   }
 
   return (
-    <Card className="w-full max-w-md bg-white/5 backdrop-blur-xl border-white/10">
+    <Card className="w-full max-w-md bg-[var(--card-bg)] backdrop-blur-xl border-[var(--border-color)]">
       <CardHeader className="text-center">
-        <CardTitle className="text-2xl font-bold text-white">Reset Password</CardTitle>
-        <CardDescription className="text-zinc-400">
+        <CardTitle className="text-2xl font-bold text-[var(--text-primary)]">Reset Password</CardTitle>
+        <CardDescription className="text-[var(--text-secondary)]">
           Enter your new password below
         </CardDescription>
       </CardHeader>
@@ -95,7 +95,7 @@ function ResetPasswordForm() {
             </div>
           )}
           <div className="space-y-2">
-            <Label htmlFor="password" className="text-zinc-300">New Password</Label>
+            <Label htmlFor="password" className="text-[var(--text-primary)]">New Password</Label>
             <Input
               id="password"
               name="password"
@@ -103,11 +103,11 @@ function ResetPasswordForm() {
               placeholder="••••••••"
               required
               minLength={6}
-              className="bg-white/5 border-white/10 text-white placeholder:text-zinc-500"
+              className="bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="confirmPassword" className="text-zinc-300">Confirm Password</Label>
+            <Label htmlFor="confirmPassword" className="text-[var(--text-primary)]">Confirm Password</Label>
             <Input
               id="confirmPassword"
               name="confirmPassword"
@@ -115,13 +115,13 @@ function ResetPasswordForm() {
               placeholder="••••••••"
               required
               minLength={6}
-              className="bg-white/5 border-white/10 text-white placeholder:text-zinc-500"
+              className="bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
             />
           </div>
           <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700" disabled={loading}>
             {loading ? "Resetting..." : "Reset Password"}
           </Button>
-          <p className="text-center text-sm text-zinc-400">
+          <p className="text-center text-sm text-[var(--text-secondary)]">
             Remember your password?{" "}
             <Link href="/login" className="text-blue-400 hover:text-blue-300">
               Sign in

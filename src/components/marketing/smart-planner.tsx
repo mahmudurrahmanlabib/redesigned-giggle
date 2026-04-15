@@ -41,7 +41,7 @@ export function SmartPlanner() {
   const SelectedIcon = selectedAgent ? ICON_MAP[selectedAgent.icon] ?? Zap : Zap
 
   return (
-    <div className="border border-[var(--border-color)] bg-[rgba(10,10,10,0.6)] p-8 md:p-12 relative overflow-hidden">
+    <div className="border border-[var(--border-color)] bg-[var(--card-bg-translucent)] p-8 md:p-12 relative overflow-hidden">
       <div className="absolute top-4 right-4 font-[var(--font-mono)] text-[0.7rem] text-[var(--text-secondary)] opacity-40">
         STEP {step + 1}/3
       </div>
@@ -108,7 +108,7 @@ export function SmartPlanner() {
               </div>
             </div>
 
-            <div className="border border-[var(--border-color)] bg-[#050505] p-5 mb-6 font-[var(--font-mono)] text-sm">
+            <div className="border border-[var(--border-color)] bg-[var(--code-bg)] p-5 mb-6 font-[var(--font-mono)] text-sm">
               <div className="text-[var(--text-secondary)] mb-2">
                 Suggested configuration:
               </div>

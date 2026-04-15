@@ -11,9 +11,9 @@ export default function Navbar() {
       <nav
         className="fixed top-5 left-1/2 -translate-x-1/2 w-[95%] max-w-[1400px] h-[70px] z-50 flex items-center clip-corners"
         style={{
-          backgroundColor: "rgba(10, 10, 10, 0.8)",
+          backgroundColor: "var(--nav-bg)",
           backdropFilter: "blur(20px)",
-          border: "1px solid rgba(255, 255, 255, 0.1)",
+          border: "1px solid var(--nav-border)",
         }}
       >
         <div className="flex justify-between items-center w-full px-8">
@@ -83,7 +83,7 @@ export default function Navbar() {
       </nav>
 
       {mobileOpen && (
-        <div className="fixed inset-0 bg-black z-[1000] flex flex-col items-center justify-center gap-8">
+        <div className="fixed inset-0 z-[1000] flex flex-col items-center justify-center gap-8" style={{ backgroundColor: "var(--mobile-menu-bg)" }}>
           <button
             className="absolute top-8 right-8 text-[var(--text-primary)]"
             onClick={() => setMobileOpen(false)}
@@ -102,7 +102,7 @@ export default function Navbar() {
             <Link
               key={link.href}
               href={link.href}
-              className="text-white text-2xl uppercase tracking-[0.05em] opacity-90 hover:opacity-100 hover:text-[var(--accent-color)] transition-all"
+              className="text-[var(--text-primary)] text-2xl uppercase tracking-[0.05em] opacity-90 hover:opacity-100 hover:text-[var(--accent-color)] transition-all"
               style={{ fontFamily: "var(--font-mono)" }}
               onClick={() => setMobileOpen(false)}
             >
