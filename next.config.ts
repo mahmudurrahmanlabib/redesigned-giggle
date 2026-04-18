@@ -44,7 +44,13 @@ function wwwToApexRedirect():
 
 const nextConfig: NextConfig = {
   reactStrictMode: false,
+  // Emit a standalone server bundle so the Docker image only ships the files
+  // actually needed to run the app (not the full node_modules tree).
+  output: "standalone",
   ...(devOrigins.length > 0 ? { allowedDevOrigins: devOrigins } : {}),
+  // ssh2 (transitive dep of node-ssh) ships native bindings and cjs-only code
+  // that Turbopack can't bundle. Keep it external so it's required at runtime.
+  serverExternalPackages: ["ssh2", "node-ssh", "cpu-features"],
   async redirects() {
     const apex = wwwToApexRedirect()
     return [

@@ -1,15 +1,11 @@
 import "dotenv/config"
 import { PrismaClient } from "@prisma/client"
-import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3"
 import { hashSync } from "bcryptjs"
 import { REGIONS } from "../src/configs/regions"
 import { SERVER_TYPES } from "../src/configs/server-types"
 import { PLANS } from "../src/configs/plans"
 
-const adapter = new PrismaBetterSqlite3({
-  url: process.env.DATABASE_URL || "file:./dev.db",
-})
-const prisma = new PrismaClient({ adapter })
+const prisma = new PrismaClient()
 
 async function main() {
   // 1. Admin user
@@ -80,7 +76,16 @@ async function main() {
   }
 
   // 4. Subscription plans
+  // credits-per-period is set per tier per the bot factory plan
+  // (Free=1k · Pro=20k · Scale=100k). Mapped from PlanTier:
+  //   starter → 1_000, pro → 20_000, enterprise → 100_000.
+  const CREDITS_PER_PERIOD: Record<string, number> = {
+    starter: 1_000,
+    pro: 20_000,
+    enterprise: 100_000,
+  }
   for (const plan of PLANS) {
+    const credits = CREDITS_PER_PERIOD[plan.tier] ?? 0
     await prisma.plan.upsert({
       where: { slug: plan.slug },
       update: {
@@ -89,9 +94,10 @@ async function main() {
         tier: plan.tier,
         stripePriceIdMonthly: plan.stripePriceIdMonthly || null,
         stripePriceIdYearly: plan.stripePriceIdYearly || null,
-        features: JSON.stringify(plan.features),
+        features: plan.features,
         isActive: plan.isActive,
         sortOrder: plan.sortOrder,
+        creditsPerPeriod: credits,
       },
       create: {
         slug: plan.slug,
@@ -100,9 +106,10 @@ async function main() {
         tier: plan.tier,
         stripePriceIdMonthly: plan.stripePriceIdMonthly || null,
         stripePriceIdYearly: plan.stripePriceIdYearly || null,
-        features: JSON.stringify(plan.features),
+        features: plan.features,
         isActive: plan.isActive,
         sortOrder: plan.sortOrder,
+        creditsPerPeriod: credits,
       },
     })
   }

@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from "next/server"
+import crypto from "node:crypto"
 import { auth } from "@/auth"
 import { prisma } from "@/lib/prisma"
 import { stripe, isStripeConfigured } from "@/lib/stripe"
-import { createSlug, encryptRootPassword, generateMockIp, computeSshFingerprint, isValidPublicKey } from "@/lib/instance"
+import { createSlug, encryptRootPassword, computeSshFingerprint, isValidPublicKey } from "@/lib/instance"
 import { calcInstancePrice } from "@/lib/pricing"
 import { BRANDING } from "@/configs/branding"
+import { parseAgentConfig } from "@/lib/agent-config"
+import { selectSkills } from "@/configs/skill-map"
+import { generateSoul } from "@/lib/soul"
+import { routeModel } from "@/lib/model-router"
+import { provisionBot } from "@/lib/provisioner"
 
 export async function POST(req: NextRequest) {
   const session = await auth()
@@ -21,6 +27,7 @@ export async function POST(req: NextRequest) {
     extraStorageGb = 0,
     rootPassword,
     sshPublicKey,
+    agentConfig: agentConfigInput,
   } = body as {
     name: string
     regionSlug: string
@@ -29,10 +36,21 @@ export async function POST(req: NextRequest) {
     extraStorageGb?: number
     rootPassword?: string
     sshPublicKey?: string
+    agentConfig?: unknown
   }
 
   if (!name || !regionSlug || !serverConfigSlug) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
+  }
+
+  // agentConfig is optional today so legacy deploys keep working; when present
+  // it must validate.
+  let parsedAgentConfig: ReturnType<typeof parseAgentConfig> | null = null
+  if (agentConfigInput) {
+    parsedAgentConfig = parseAgentConfig(agentConfigInput)
+    if (!parsedAgentConfig.ok) {
+      return NextResponse.json({ error: `Invalid agentConfig: ${parsedAgentConfig.error}` }, { status: 400 })
+    }
   }
 
   const [region, serverConfig] = await Promise.all([
@@ -71,6 +89,45 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Derive agent-factory fields when agentConfig was supplied.
+  let agentFields: {
+    agentType: string | null
+    agentConfig: object | null
+    soulMd: string | null
+    skills: string[] | null
+    modelTier: string | null
+    botToken: string | null
+    deploymentTarget: string | null
+    interfaceKind: string | null
+  } = {
+    agentType: null,
+    agentConfig: null,
+    soulMd: null,
+    skills: null,
+    modelTier: null,
+    botToken: null,
+    deploymentTarget: null,
+    interfaceKind: null,
+  }
+  if (parsedAgentConfig?.ok) {
+    const cfg = parsedAgentConfig.data
+    const skills = selectSkills(cfg)
+    const soulMd = generateSoul(cfg, skills)
+    // Sanity check model routing early so we fail fast instead of during provision.
+    routeModel(cfg.budget_tier)
+    const botToken = "sk_bot_" + crypto.randomBytes(24).toString("hex")
+    agentFields = {
+      agentType: cfg.use_case,
+      agentConfig: cfg,
+      soulMd,
+      skills,
+      modelTier: cfg.budget_tier,
+      botToken,
+      deploymentTarget: cfg.deployment_target,
+      interfaceKind: cfg.interface,
+    }
+  }
+
   const instance = await prisma.instance.create({
     data: {
       userId: session.user.id,
@@ -83,6 +140,7 @@ export async function POST(req: NextRequest) {
       billingInterval,
       status: "provisioning",
       rootPasswordEnc: rootPassword ? encryptRootPassword(rootPassword) : undefined,
+      ...agentFields,
     },
   })
 
@@ -157,14 +215,26 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  // Dev mode: skip Stripe, auto-activate
-  await prisma.instance.update({
-    where: { id: instance.id },
-    data: {
-      status: "running",
-      ipAddress: generateMockIp(),
-    },
-  })
+  // Dev mode: skip Stripe, auto-activate. Provision now so the bot is usable.
+  try {
+    const freshInstance = await prisma.instance.findUnique({ where: { id: instance.id } })
+    if (freshInstance) {
+      await provisionBot(freshInstance)
+    }
+  } catch (err) {
+    console.error("[deploy] provisionBot failed (dev path):", err)
+    await prisma.instance.update({
+      where: { id: instance.id },
+      data: { status: "failed" },
+    })
+    await prisma.instanceLog.create({
+      data: {
+        instanceId: instance.id,
+        level: "error",
+        message: `Provisioning failed: ${err instanceof Error ? err.message : String(err)}`,
+      },
+    })
+  }
 
   const plan = await prisma.plan.findFirst({ where: { tier: "starter", isActive: true } })
   if (plan) {
