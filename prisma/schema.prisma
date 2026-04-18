@@ -3,7 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -24,12 +25,16 @@ model User {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
+  credits          Int       @default(0)
+
   accounts      Account[]
   sessions      Session[]
   subscriptions Subscription[]
   instances     Instance[]
   sshKeys       SshKey[]
   adminNotes    AdminNote[] @relation("userNotes")
+  usageEvents   UsageEvent[]
+  creditLedger  CreditLedger[]
 }
 
 model Account {
@@ -76,9 +81,10 @@ model Plan {
   tier                 String   // "starter" | "pro" | "enterprise"
   stripePriceIdMonthly String?
   stripePriceIdYearly  String?
-  features             String   // JSON-encoded string array
+  features             Json     // string[]
   isActive             Boolean  @default(true)
   sortOrder            Int      @default(0)
+  creditsPerPeriod     Int      @default(0)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
@@ -163,6 +169,24 @@ model Instance {
   ipAddress            String?
   rootPasswordEnc      String?
   stripeSubscriptionId String?  @unique
+
+  // Bot Factory fields
+  agentType            String?
+  agentConfig          Json?    // AgentConfig object
+  soulMd               String?
+  skills               Json?    // string[]
+  modelTier            String?  // "low" | "mid" | "high"
+  botToken             String?  @unique
+  lastActiveAt         DateTime?
+  deploymentTarget     String?  // "vps" | "shared" | "serverless"
+  interfaceKind        String?  // "web" | "telegram" | "discord" | "slack" | "api"
+  telegramBotTokenEnc  String?
+  telegramUsername     String?
+  botHostId            String?
+  containerName        String?
+  containerPort        Int?
+  linodeId             Int?     // for vps tier — the dedicated VM linode id
+
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
@@ -170,11 +194,60 @@ model Instance {
   region       Region        @relation(fields: [regionId], references: [id])
   serverConfig ServerConfig  @relation(fields: [serverConfigId], references: [id])
   sshKey       SshKey?       @relation(fields: [sshKeyId], references: [id])
+  botHost      BotHost?      @relation(fields: [botHostId], references: [id])
   logs         InstanceLog[]
   subscription Subscription?
+  usageEvents  UsageEvent[]
 
   @@index([userId])
   @@index([status])
+  @@index([botHostId])
+}
+
+model BotHost {
+  id        String   @id @default(cuid())
+  label     String
+  linodeId  Int      @unique
+  ipAddress String
+  region    String
+  plan      String   // linode plan slug e.g. "g6-standard-2"
+  capacity  Int      @default(15) // soft cap on containers
+  status    String   @default("ready") // ready | draining | offline
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  instances Instance[]
+
+  @@index([status])
+}
+
+model UsageEvent {
+  id         String   @id @default(cuid())
+  instanceId String
+  userId     String
+  kind       String   // "request" | "tokens_in" | "tokens_out"
+  amount     Int
+  meta       Json?
+  createdAt  DateTime @default(now())
+
+  instance Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([instanceId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model CreditLedger {
+  id        String   @id @default(cuid())
+  userId    String
+  delta     Int      // positive = grant, negative = consume
+  reason    String   // "subscription:pro:2026-04" | "topup:cs_xxx" | "consume:inst_xxx"
+  balance   Int
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }
 
 model InstanceLog {
