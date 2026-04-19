@@ -116,6 +116,11 @@ export default async function InstanceDetailPage({
           ramGb: instance.serverConfig.ramGb,
           createdAt: instance.createdAt.toISOString(),
           gatewayUrl,
+          domain: instance.domain,
+          dnsStatus: instance.dnsStatus,
+          tlsStatus: instance.tlsStatus,
+          openclawAdminEmail: instance.openclawAdminEmail,
+          hasOpenclawPassword: Boolean(instance.openclawAdminPasswordEnc),
         }}
         logs={instance.logs.map((l) => ({
           id: l.id,

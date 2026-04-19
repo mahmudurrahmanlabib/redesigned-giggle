@@ -61,9 +61,9 @@ const BUDGETS: { value: BudgetTier; label: string; hint: string }[] = [
   { value: "high", label: "High", hint: "Best available · Claude Opus / GPT-4.1" },
 ]
 
-type Step = "purpose" | "interface" | "capability" | "project" | "region" | "billing" | "server" | "advanced" | "review"
-const ALL_STEPS: Step[] = ["purpose", "interface", "capability", "project", "region", "billing", "server", "advanced", "review"]
-const SERVERLESS_SKIP: Step[] = ["region", "server", "advanced"]
+type Step = "purpose" | "interface" | "capability" | "project" | "region" | "billing" | "server" | "advanced" | "domain" | "review"
+const ALL_STEPS: Step[] = ["purpose", "interface", "capability", "project", "region", "billing", "server", "advanced", "domain", "review"]
+const SERVERLESS_SKIP: Step[] = ["region", "server", "advanced", "domain"]
 function stepsFor(target: DeploymentTarget): Step[] {
   return target === "vps" ? ALL_STEPS : ALL_STEPS.filter((s) => !SERVERLESS_SKIP.includes(s))
 }
@@ -85,8 +85,11 @@ const STEP_LABELS: Record<Step, string> = {
   billing: "Billing",
   server: "Server",
   advanced: "Advanced",
+  domain: "Domain",
   review: "Review & Deploy",
 }
+
+const DOMAIN_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/
 
 export default function DeployPage() {
   const router = useRouter()
@@ -115,6 +118,7 @@ export default function DeployPage() {
   const [rootPassword, setRootPassword] = useState("")
   const [sshKey, setSshKey] = useState("")
   const [extraStorageGb, setExtraStorageGb] = useState(0)
+  const [domain, setDomain] = useState("")
 
   const STEPS = stepsFor(deploymentTarget)
   // Keep current step valid when toggling between VPS and serverless
@@ -145,6 +149,8 @@ export default function DeployPage() {
         return !!selectedServer
       case "advanced":
         return true
+      case "domain":
+        return domain.trim() === "" || DOMAIN_RE.test(domain.trim().toLowerCase())
       case "review":
         return true
     }
@@ -181,6 +187,7 @@ export default function DeployPage() {
           extraStorageGb: deploymentTarget === "vps" ? extraStorageGb : 0,
           rootPassword: deploymentTarget === "vps" ? (rootPassword || undefined) : undefined,
           sshPublicKey: deploymentTarget === "vps" ? (sshKey || undefined) : undefined,
+          domain: deploymentTarget === "vps" && domain.trim() ? domain.trim().toLowerCase() : undefined,
           agentConfig: {
             use_case: useCase,
             target_user: targetUser.trim(),
@@ -790,6 +797,32 @@ export default function DeployPage() {
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* STEP: Domain */}
+        {step === "domain" && (
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">Custom Domain</h2>
+              <p className="text-sm text-[var(--text-secondary)]">
+                Optional. Enter a domain you own (e.g. <span className="font-mono">agent.example.com</span>). We&apos;ll serve your OpenClaw agent there with auto-issued SSL.
+                You&apos;ll add an <span className="font-mono">A</span> record pointing to the server IP after provisioning — we&apos;ll show the exact value.
+              </p>
+            </div>
+            <input
+              type="text"
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              placeholder="agent.example.com"
+              className="w-full bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/50 focus:outline-none focus:border-[var(--accent-color)]/50 transition-colors font-mono"
+            />
+            {domain.trim() && !DOMAIN_RE.test(domain.trim().toLowerCase()) && (
+              <p className="text-xs text-amber-400 font-mono">Not a valid domain — expected like <span>agent.example.com</span></p>
+            )}
+            <p className="text-[11px] font-mono text-[var(--text-secondary)]">
+              Leave blank to expose on the server IP over HTTP. You can attach a domain later.
+            </p>
           </div>
         )}
 

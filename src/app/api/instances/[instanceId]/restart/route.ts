@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/auth"
 import { prisma } from "@/lib/prisma"
+import { restartBot } from "@/lib/provisioner"
 
 export async function POST(
   _req: NextRequest,
@@ -32,11 +33,19 @@ export async function POST(
     )
   }
 
-  // TODO: integrate actual restart via Hetzner/provisioner API
-  await prisma.instance.update({
-    where: { id: instanceId },
-    data: { status: "running" },
-  })
+  try {
+    await restartBot(instance)
+  } catch (err) {
+    console.error(`[restart] failed for ${instanceId}:`, err)
+    await prisma.instanceLog.create({
+      data: {
+        instanceId,
+        level: "error",
+        message: `Restart failed: ${err instanceof Error ? err.message : String(err)}`,
+      },
+    })
+    return NextResponse.json({ error: "Restart failed" }, { status: 500 })
+  }
 
   await prisma.instanceLog.create({
     data: {

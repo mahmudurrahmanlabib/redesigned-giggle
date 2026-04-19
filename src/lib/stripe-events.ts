@@ -4,7 +4,8 @@
 
 import type Stripe from "stripe"
 import { prisma } from "@/lib/prisma"
-import { generateMockIp } from "@/lib/instance"
+import { provisionBot } from "@/lib/provisioner"
+import { grantCredits } from "@/lib/credits"
 
 // ---------- checkout.session.completed ----------
 // Triggered when the user finishes paying. Flips Instance to "running",
@@ -46,16 +47,35 @@ export async function handleCheckoutSessionCompleted(
       ? session.subscription
       : session.subscription?.id ?? null
 
-  // Flip the instance to running and assign a mock IP.
-  // TODO: integrate Hetzner/OpenClaw provisioning here — for now we mock.
+  // Stamp the subscription id first so downstream provisioning has a record.
   await prisma.instance.update({
     where: { id: instanceId },
     data: {
-      status: "running",
-      ipAddress: instance.ipAddress ?? generateMockIp(),
       stripeSubscriptionId: stripeSubscriptionId ?? undefined,
     },
   })
+
+  // Real provision. In mock mode (no LINODE_API_TOKEN) this falls back to
+  // assigning a mock IP and flipping status=running, preserving dev behavior.
+  try {
+    const fresh = await prisma.instance.findUnique({ where: { id: instanceId } })
+    if (fresh) {
+      await provisionBot(fresh)
+    }
+  } catch (err) {
+    console.error(`[stripe] provisionBot failed for ${instanceId}:`, err)
+    await prisma.instance.update({
+      where: { id: instanceId },
+      data: { status: "failed" },
+    })
+    await prisma.instanceLog.create({
+      data: {
+        instanceId,
+        level: "error",
+        message: `Provisioning failed after payment: ${err instanceof Error ? err.message : String(err)}`,
+      },
+    })
+  }
 
   // Create the Subscription row, linked 1:1 to the instance.
   await prisma.subscription.upsert({
@@ -142,12 +162,28 @@ export async function handleInvoicePaid(invoice: Stripe.Invoice): Promise<void> 
   if (!subId) return
   const local = await prisma.subscription.findFirst({
     where: { stripeSubscriptionId: subId },
+    include: { plan: true },
   })
   if (!local) return
   await prisma.subscription.update({
     where: { id: local.id },
     data: { status: "active" },
   })
+
+  // Grant monthly credits for the renewal period.
+  const credits = local.plan?.creditsPerPeriod ?? 0
+  if (credits > 0) {
+    const periodLabel = new Date().toISOString().slice(0, 7) // yyyy-mm
+    try {
+      await grantCredits(
+        local.userId,
+        credits,
+        `subscription:${local.plan?.slug ?? "unknown"}:${periodLabel}:${invoice.id ?? "no-invoice"}`
+      )
+    } catch (err) {
+      console.error(`[stripe] grantCredits failed for user ${local.userId}:`, err)
+    }
+  }
 }
 
 // ---------- invoice.payment_failed ----------
