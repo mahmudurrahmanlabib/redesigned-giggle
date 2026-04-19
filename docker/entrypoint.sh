@@ -26,12 +26,16 @@ done
 echo "[entrypoint] Postgres reachable at $DB_HOST:$DB_PORT."
 
 echo "[entrypoint] Running prisma migrate deploy..."
-npx --no-install prisma migrate deploy
+# Standalone build doesn't include node_modules/.bin symlinks, so invoke
+# the Prisma CLI entry point directly instead of via `npx`/the bin wrapper.
+node ./node_modules/prisma/build/index.js migrate deploy
 
 # Optional: seed on first boot if SEED_ON_BOOT=true. Idempotent (seed uses upsert).
+# Skipped by default — the standalone runtime doesn't ship tsx and the seed
+# script is TypeScript. Run seeds from the host with `docker compose exec app ...`
+# if/when needed.
 if [ "${SEED_ON_BOOT:-false}" = "true" ]; then
-  echo "[entrypoint] Running seed..."
-  npx --no-install tsx prisma/seed.ts || echo "[entrypoint] Seed failed (non-fatal)."
+  echo "[entrypoint] SEED_ON_BOOT=true but tsx is not bundled in the runtime image; skipping."
 fi
 
 echo "[entrypoint] Starting app: $*"
