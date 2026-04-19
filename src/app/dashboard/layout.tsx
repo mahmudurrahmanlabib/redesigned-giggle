@@ -1,6 +1,11 @@
 import { DashboardSidebar } from "@/components/layout/dashboard-sidebar"
 import { DashboardTopbar } from "@/components/layout/dashboard-topbar"
 
+// Dashboard pages are per-user and query the DB on every render; never
+// prerender them at build time. Cascades to every route under /dashboard/*.
+export const dynamic = "force-dynamic"
+export const revalidate = 0
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen flex">

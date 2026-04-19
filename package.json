@@ -6,6 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "start:standalone": "node .next/standalone/server.js",
+    "deploy:migrate": "prisma migrate deploy",
     "lint": "eslint",
     "bootstrap:host": "tsx scripts/bootstrap-shared-host.ts",
     "bot-runtime:build": "docker build -t sovereign-bot-runtime:dev bot-runtime",

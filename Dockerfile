@@ -29,6 +29,10 @@ COPY . .
 RUN npx prisma generate
 
 ENV NEXT_TELEMETRY_DISABLED=1
+# Build-time stub so Prisma client import doesn't fail on URL parsing.
+# No queries run during build (all DB-touching pages are force-dynamic);
+# real DATABASE_URL is injected at container runtime via docker-compose.
+ENV DATABASE_URL="postgresql://build:build@127.0.0.1:5432/build?schema=public"
 RUN npm run build
 
 # ──────────────────────────────────────────────────────────────────────────────
