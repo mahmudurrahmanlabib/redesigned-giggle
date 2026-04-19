@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { Prisma } from "@prisma/client"
 import { prisma } from "@/lib/prisma"
 import { consumeCredits } from "@/lib/credits"
 import { pauseBot } from "@/lib/provisioner"
@@ -63,7 +64,7 @@ export async function POST(req: NextRequest) {
       userId: instance.userId,
       kind: body.kind,
       amount: Math.round(body.amount),
-      meta: body.meta ?? null,
+      meta: (body.meta ?? Prisma.JsonNull) as Prisma.InputJsonValue,
     },
   })
 

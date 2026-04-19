@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import crypto from "node:crypto"
 import { auth } from "@/auth"
+import { Prisma } from "@prisma/client"
 import { prisma } from "@/lib/prisma"
 import { stripe, isStripeConfigured } from "@/lib/stripe"
 import { createSlug, encryptRootPassword, computeSshFingerprint, isValidPublicKey } from "@/lib/instance"
@@ -104,18 +105,18 @@ export async function POST(req: NextRequest) {
   // Derive agent-factory fields when agentConfig was supplied.
   let agentFields: {
     agentType: string | null
-    agentConfig: object | null
+    agentConfig: Prisma.InputJsonValue | typeof Prisma.JsonNull
     soulMd: string | null
-    skills: string[] | null
+    skills: Prisma.InputJsonValue | typeof Prisma.JsonNull
     modelTier: string | null
     botToken: string | null
     deploymentTarget: string | null
     interfaceKind: string | null
   } = {
     agentType: null,
-    agentConfig: null,
+    agentConfig: Prisma.JsonNull,
     soulMd: null,
-    skills: null,
+    skills: Prisma.JsonNull,
     modelTier: null,
     botToken: null,
     deploymentTarget: null,
@@ -130,7 +131,7 @@ export async function POST(req: NextRequest) {
     const botToken = "sk_bot_" + crypto.randomBytes(24).toString("hex")
     agentFields = {
       agentType: cfg.use_case,
-      agentConfig: cfg,
+      agentConfig: cfg as unknown as Prisma.InputJsonValue,
       soulMd,
       skills,
       modelTier: cfg.budget_tier,
