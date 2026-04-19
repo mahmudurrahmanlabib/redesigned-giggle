@@ -4,7 +4,12 @@ import { prisma } from "@/lib/prisma"
 import { deleteBot } from "@/lib/provisioner"
 import { stripe, isStripeConfigured } from "@/lib/stripe"
 
-export async function POST(
+/**
+ * REST-friendly DELETE alias for /api/instances/:id. Mirrors the POST /delete
+ * handler. The POST route remains for clients that prefer it; this one lets
+ * fetch(..., { method: "DELETE" }) work.
+ */
+export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ instanceId: string }> }
 ) {
@@ -16,10 +21,7 @@ export async function POST(
   const { instanceId } = await params
   const isAdmin = (session.user as { role?: string }).role === "admin"
 
-  const instance = await prisma.instance.findUnique({
-    where: { id: instanceId },
-  })
-
+  const instance = await prisma.instance.findUnique({ where: { id: instanceId } })
   if (!instance) {
     return NextResponse.json({ error: "Instance not found" }, { status: 404 })
   }
@@ -30,8 +32,7 @@ export async function POST(
   try {
     await deleteBot(instance)
   } catch (err) {
-    console.error(`[delete] provisioner cleanup failed for ${instanceId}:`, err)
-    // Non-fatal — we still want the DB record to reflect deletion.
+    console.error(`[instance DELETE] provisioner cleanup failed for ${instanceId}:`, err)
   }
 
   await prisma.instanceLog.create({
@@ -42,16 +43,13 @@ export async function POST(
     },
   })
 
-  // Cancel linked subscription if exists
-  const sub = await prisma.subscription.findFirst({
-    where: { instanceId },
-  })
+  const sub = await prisma.subscription.findFirst({ where: { instanceId } })
   if (sub) {
     if (isStripeConfigured() && sub.stripeSubscriptionId) {
       try {
         await stripe.subscriptions.cancel(sub.stripeSubscriptionId)
       } catch (err) {
-        console.warn(`[delete] stripe cancel failed:`, err)
+        console.warn(`[instance DELETE] stripe cancel failed:`, err)
       }
     }
     await prisma.subscription.update({

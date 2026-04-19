@@ -16,7 +16,10 @@ export default async function DashboardPage() {
   const session = await auth()
   if (!session?.user?.id) redirect("/login")
 
-  const [instances, subscriptions] = await Promise.all([
+  const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+  const since24 = new Date(Date.now() - 24 * 60 * 60 * 1000)
+
+  const [instances, subscriptions, user, usage30, incidents24] = await Promise.all([
     prisma.instance.findMany({
       where: { userId: session.user.id },
       include: { region: true, serverConfig: true },
@@ -26,10 +29,33 @@ export default async function DashboardPage() {
       where: { userId: session.user.id },
       include: { plan: true },
     }),
+    prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { credits: true },
+    }),
+    prisma.usageEvent.aggregate({
+      where: { userId: session.user.id, createdAt: { gte: since30 } },
+      _sum: { amount: true },
+    }),
+    prisma.instanceLog.count({
+      where: {
+        instance: { userId: session.user.id },
+        level: "error",
+        createdAt: { gte: since24 },
+      },
+    }),
   ])
 
   const activeInstances = instances.filter((i) => i.status === "running").length
   const activeSubs = subscriptions.filter((s) => s.status === "active").length
+  // Monthly run-rate from currently-running instances' server configs. Cheaper
+  // than reconstructing Stripe line items, and matches what the user sees in
+  // the deploy wizard.
+  const monthlySpend = instances
+    .filter((i) => i.status === "running")
+    .reduce((sum, i) => sum + (i.serverConfig?.priceMonthly ?? 0), 0)
+  const credits = user?.credits ?? 0
+  const usageTotal = usage30._sum.amount ?? 0
 
   return (
     <div className="space-y-8 max-w-5xl">
@@ -51,9 +77,9 @@ export default async function DashboardPage() {
       <div className="grid gap-0 sm:grid-cols-2 lg:grid-cols-4">
         {[
           { label: "Active Agents", value: activeInstances.toString(), accent: true, hint: `of ${instances.length} total` },
-          { label: "Credits Remaining", value: "12,480", accent: false, hint: "~3.2k requests left", dummy: true },
-          { label: "Monthly Spend", value: "$94.20", accent: false, hint: "across " + activeSubs + " subs" },
-          { label: "Incidents 24h", value: "0", accent: false, hint: "all systems up", dummy: true },
+          { label: "Credits Remaining", value: credits.toLocaleString(), accent: false, hint: `${usageTotal.toLocaleString()} used last 30d` },
+          { label: "Monthly Spend", value: `$${monthlySpend.toFixed(2)}`, accent: false, hint: `across ${activeSubs} sub${activeSubs === 1 ? "" : "s"}` },
+          { label: "Incidents 24h", value: incidents24.toString(), accent: false, hint: incidents24 === 0 ? "all systems up" : "check monitoring" },
         ].map((stat) => (
           <div key={stat.label} className="border border-[var(--border-color)] bg-[var(--card-bg)] p-6">
             <p className="text-xs text-[var(--text-secondary)] uppercase tracking-[0.1em]" style={{ fontFamily: "var(--font-mono)" }}>
@@ -66,8 +92,7 @@ export default async function DashboardPage() {
               {stat.value}
             </p>
             <p className="text-[10px] font-mono text-[var(--text-secondary)] mt-1">
-              {stat.hint}{stat.dummy ? " ·" : ""}
-              {stat.dummy && <span className="text-amber-400/80"> dummy</span>}
+              {stat.hint}
             </p>
           </div>
         ))}

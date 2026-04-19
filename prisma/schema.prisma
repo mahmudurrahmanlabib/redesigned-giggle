@@ -4,7 +4,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -186,6 +185,13 @@ model Instance {
   containerName        String?
   containerPort        Int?
   linodeId             Int?     // for vps tier — the dedicated VM linode id
+
+  // OpenClaw agent deploy
+  domain                    String?
+  dnsStatus                 String   @default("pending") // pending|propagating|ready|error
+  tlsStatus                 String   @default("pending") // pending|issued|failed
+  openclawAdminEmail        String?
+  openclawAdminPasswordEnc  String?
 
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt

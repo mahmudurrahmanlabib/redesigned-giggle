@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
     rootPassword,
     sshPublicKey,
     agentConfig: agentConfigInput,
+    domain,
   } = body as {
     name: string
     regionSlug: string
@@ -37,6 +38,17 @@ export async function POST(req: NextRequest) {
     rootPassword?: string
     sshPublicKey?: string
     agentConfig?: unknown
+    domain?: string
+  }
+
+  let normalizedDomain: string | null = null
+  if (typeof domain === "string" && domain.trim().length > 0) {
+    const trimmed = domain.trim().toLowerCase()
+    // Minimal FQDN check: 2+ labels, alnum/dash, no trailing dot required.
+    if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(trimmed)) {
+      return NextResponse.json({ error: "Invalid domain" }, { status: 400 })
+    }
+    normalizedDomain = trimmed
   }
 
   if (!name || !regionSlug || !serverConfigSlug) {
@@ -140,6 +152,7 @@ export async function POST(req: NextRequest) {
       billingInterval,
       status: "provisioning",
       rootPasswordEnc: rootPassword ? encryptRootPassword(rootPassword) : undefined,
+      domain: normalizedDomain,
       ...agentFields,
     },
   })
