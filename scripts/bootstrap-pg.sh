@@ -84,7 +84,10 @@ if is_placeholder "$EXISTING_URL"; then
   log "Generated a new DB password (24 bytes hex)."
 else
   # Reuse the existing URL's password so a re-run doesn't churn creds.
-  DB_PASSWORD="$(printf '%s' "$EXISTING_URL" | sed -E 's|^postgres(ql)?://[^:]+:([^@]+)@.*$|\2|')"
+  # Use `sed -n ... p` so no-match yields empty output (without -n, sed
+  # prints the input unchanged, which would give us a garbage "password"
+  # equal to the whole URL).
+  DB_PASSWORD="$(printf '%s' "$EXISTING_URL" | sed -nE 's|^postgres(ql)?://[^:]+:([^@]+)@.*$|\2|p')"
   if [ -z "$DB_PASSWORD" ]; then
     DB_PASSWORD="$(openssl rand -hex 24)"
     log "Existing DATABASE_URL has no parseable password; generated a new one."
@@ -106,8 +109,6 @@ BEGIN
   END IF;
 END
 \$\$;
-SELECT 'createdb' FROM pg_database WHERE datname = '${DB_NAME}'\gset
-\echo
 SQL
 
 if ! sudo -u postgres psql -Atc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1; then
@@ -119,10 +120,16 @@ fi
 
 log "Writing .env..."
 touch "$ENV_FILE"
-chmod 600 "$ENV_FILE"
 TMP="$(mktemp)"
-if grep -v -E '^(DATABASE_URL|AUTH_SECRET)=' "$ENV_FILE" > "$TMP" 2>/dev/null; then :; fi
+# grep -v exits 1 if every line matched (i.e. nothing survives). That's
+# fine — TMP just ends up empty. Swallow the nonzero so set -e lets us
+# proceed.
+grep -v -E '^(DATABASE_URL|AUTH_SECRET)=' "$ENV_FILE" > "$TMP" 2>/dev/null || true
 mv "$TMP" "$ENV_FILE"
+# Re-chmod *after* the move — `mv` from /tmp may cross filesystems and
+# the destination inherits the source's mode, which isn't guaranteed to
+# be 0600 on all setups.
+chmod 600 "$ENV_FILE"
 
 if [ -z "$EXISTING_AUTH" ] || [ "$EXISTING_AUTH" = "" ]; then
   AUTH_SECRET="$(openssl rand -base64 32)"
@@ -143,13 +150,29 @@ if ! PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d
 fi
 log "Postgres OK."
 
-log "Syncing schema (prisma db push)..."
+log "Syncing schema (drizzle-kit push)..."
 cd "$REPO_ROOT"
-node --env-file=.env node_modules/prisma/build/index.js db push --accept-data-loss
+if [ ! -f node_modules/drizzle-kit/bin.cjs ]; then
+  die "drizzle-kit is not installed. Run: npm ci --no-audit --no-fund"
+fi
+if [ ! -f drizzle.config.ts ]; then
+  die "drizzle.config.ts not found at repo root. Check out a commit that has it."
+fi
+if [ ! -f src/db/schema.ts ]; then
+  die "src/db/schema.ts not found. Check out a commit that has it."
+fi
+# --force pushes without interactive prompts; schema is source of truth.
+if ! node --env-file=.env node_modules/drizzle-kit/bin.cjs push --force; then
+  die "drizzle-kit push failed. Check the output above. Common causes: role lacks CREATE on the database, or DATABASE_URL points at the wrong host."
+fi
 
 if [ "${DB_SEED:-0}" = "1" ]; then
   log "Seeding (DB_SEED=1)..."
-  node --env-file=.env --import tsx prisma/seed.ts || warn "Seed failed (non-fatal)."
+  if [ ! -f src/db/seed.ts ]; then
+    warn "src/db/seed.ts not found; skipping seed."
+  else
+    node --env-file=.env --import tsx src/db/seed.ts || warn "Seed failed (non-fatal)."
+  fi
 fi
 
 cat <<DONE
