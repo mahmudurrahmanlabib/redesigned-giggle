@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "postbuild": "cp -R public .next/standalone/public && cp -R .next/static .next/standalone/.next/static",
     "start": "next start",
     "start:standalone": "node --env-file=.env .next/standalone/server.js",
     "lint": "eslint",
