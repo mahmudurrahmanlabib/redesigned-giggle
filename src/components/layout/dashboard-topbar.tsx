@@ -1,6 +1,6 @@
 "use client"
 
-import { signOut, useSession } from "next-auth/react"
+import { useSession } from "next-auth/react"
 import { useRouter } from "next/navigation"
 import {
   DropdownMenu,
@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import Link from "next/link"
 import { User, Bot, CreditCard, Settings, LogOut } from "lucide-react"
+import { signOutAction } from "@/app/actions/auth"
 
 function UserAvatar({ name, email }: { name?: string | null; email?: string | null }) {
   const initials = (name || email || "U")
@@ -125,7 +126,7 @@ export function DashboardTopbar() {
             <DropdownMenuSeparator className="bg-[var(--border-color)]" />
             <DropdownMenuItem
               className="flex items-center gap-2 text-red-400 cursor-pointer text-sm rounded-none"
-              onClick={() => signOut({ callbackUrl: "/" })}
+              onClick={() => void signOutAction()}
             >
               <LogOut className="w-4 h-4" />
               Sign Out

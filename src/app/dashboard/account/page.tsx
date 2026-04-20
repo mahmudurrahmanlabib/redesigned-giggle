@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useSession } from "next-auth/react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -20,7 +20,7 @@ interface AccountData {
 }
 
 export default function AccountPage() {
-  const { status: sessionStatus } = useSession()
+  const router = useRouter()
   const [account, setAccount] = useState<AccountData | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -47,19 +47,17 @@ export default function AccountPage() {
   const [passwordSaving, setPasswordSaving] = useState(false)
 
   useEffect(() => {
-    if (sessionStatus === "loading") return
-
-    if (sessionStatus !== "authenticated") {
-      setLoading(false)
-      return
-    }
-
     let cancelled = false
 
     async function fetchAccount() {
       try {
         const res = await fetch("/api/auth/account", { credentials: "include" })
-        if (!cancelled && res.ok) {
+        if (cancelled) return
+        if (res.status === 401) {
+          router.push("/login")
+          return
+        }
+        if (res.ok) {
           const data = await res.json()
           setAccount(data)
           setName(data.name || "")
@@ -78,7 +76,7 @@ export default function AccountPage() {
     return () => {
       cancelled = true
     }
-  }, [sessionStatus])
+  }, [router])
 
   async function handleNameSave() {
     setNameSuccess("")

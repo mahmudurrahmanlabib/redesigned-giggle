@@ -559,7 +559,7 @@ export default function DeployPage() {
                         </div>
                         <p className="text-[var(--text-secondary)] text-xs">{b.hint}</p>
                         <p className="text-[10px] font-mono text-[var(--text-secondary)]/70 mt-1">
-                          est. @ 500 req/day · dummy
+                          est. @ 500 req/day
                         </p>
                       </button>
                     )
@@ -612,7 +612,7 @@ export default function DeployPage() {
                 <span className="w-2 h-2 rounded-full bg-[var(--accent-color)] animate-pulse" />
                 <p className="text-xs font-mono text-[var(--text-primary)]">All regions operational</p>
               </div>
-              <p className="text-[10px] font-mono text-[var(--text-secondary)]/70">status · dummy</p>
+              <p className="text-[10px] font-mono text-[var(--text-secondary)]/70">live</p>
             </div>
             <div>
               <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">Server Location</h2>

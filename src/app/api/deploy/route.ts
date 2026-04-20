@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import crypto from "node:crypto"
 import { auth } from "@/auth"
-import { db, eq, and, instances, instanceLogs, regions, serverConfigs, sshKeys, users, plans, subscriptions } from "@/db"
+import { db, eq, and, asc, instances, instanceLogs, regions, serverConfigs, sshKeys, users, plans, subscriptions } from "@/db"
 import { stripe, isStripeConfigured } from "@/lib/stripe"
 import { createSlug, encryptRootPassword, computeSshFingerprint, isValidPublicKey } from "@/lib/instance"
 import { calcInstancePrice } from "@/lib/pricing"
@@ -31,14 +31,18 @@ export async function POST(req: NextRequest) {
     domain,
   } = body as {
     name: string
-    regionSlug: string
-    serverConfigSlug: string
+    regionSlug?: string
+    serverConfigSlug?: string
     billingInterval?: "month" | "year"
     extraStorageGb?: number
     rootPassword?: string
     sshPublicKey?: string
     agentConfig?: unknown
     domain?: string
+  }
+
+  if (!name) {
+    return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
   }
 
   let normalizedDomain: string | null = null
@@ -50,10 +54,6 @@ export async function POST(req: NextRequest) {
     normalizedDomain = trimmed
   }
 
-  if (!name || !regionSlug || !serverConfigSlug) {
-    return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
-  }
-
   let parsedAgentConfig: ReturnType<typeof parseAgentConfig> | null = null
   if (agentConfigInput) {
     parsedAgentConfig = parseAgentConfig(agentConfigInput)
@@ -62,16 +62,40 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const [region, serverConfig] = await Promise.all([
-    db.query.regions.findFirst({ where: eq(regions.slug, regionSlug) }),
-    db.query.serverConfigs.findFirst({ where: eq(serverConfigs.slug, serverConfigSlug) }),
-  ])
+  const isVps = parsedAgentConfig?.ok
+    ? parsedAgentConfig.data.deployment_target === "vps"
+    : !!regionSlug
 
-  if (!region || !region.available) {
-    return NextResponse.json({ error: "Invalid or unavailable region" }, { status: 400 })
+  let region, serverConfig
+
+  if (regionSlug && serverConfigSlug) {
+    ;[region, serverConfig] = await Promise.all([
+      db.query.regions.findFirst({ where: eq(regions.slug, regionSlug) }),
+      db.query.serverConfigs.findFirst({ where: eq(serverConfigs.slug, serverConfigSlug) }),
+    ])
   }
-  if (!serverConfig || !serverConfig.isActive) {
-    return NextResponse.json({ error: "Invalid or inactive server config" }, { status: 400 })
+
+  if (!region) {
+    region = await db.query.regions.findFirst({
+      where: eq(regions.available, true),
+      orderBy: asc(regions.sortOrder),
+    })
+  }
+  if (!serverConfig) {
+    serverConfig = await db.query.serverConfigs.findFirst({
+      where: eq(serverConfigs.isActive, true),
+      orderBy: asc(serverConfigs.sortOrder),
+    })
+  }
+
+  if (!region) {
+    return NextResponse.json({ error: "No available region found" }, { status: 500 })
+  }
+  if (!serverConfig) {
+    return NextResponse.json({ error: "No active server config found" }, { status: 500 })
+  }
+  if (isVps && !region.available) {
+    return NextResponse.json({ error: "Invalid or unavailable region" }, { status: 400 })
   }
 
   let sshKeyId: string | undefined

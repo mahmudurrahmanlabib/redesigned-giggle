@@ -139,6 +139,7 @@ export async function provisionBot(instance: Instance): Promise<ProvisionResult>
   if (target === "vps") {
     return provisionVpsBot(instance)
   }
+  // "shared" and "serverless" both run on managed shared infrastructure.
   return provisionSharedBot(instance)
 }
 
