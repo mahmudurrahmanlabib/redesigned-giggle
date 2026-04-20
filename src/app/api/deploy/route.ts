@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import crypto from "node:crypto"
 import { auth } from "@/auth"
-import { db, eq, instances, instanceLogs, regions, serverConfigs, sshKeys, users, plans, subscriptions } from "@/db"
+import { db, eq, and, instances, instanceLogs, regions, serverConfigs, sshKeys, users, plans, subscriptions } from "@/db"
 import { stripe, isStripeConfigured } from "@/lib/stripe"
 import { createSlug, encryptRootPassword, computeSshFingerprint, isValidPublicKey } from "@/lib/instance"
 import { calcInstancePrice } from "@/lib/pricing"
@@ -162,7 +162,7 @@ export async function POST(req: NextRequest) {
 
   if (isStripeConfigured()) {
     const plan = await db.query.plans.findFirst({
-      where: eq(plans.isActive, true),
+      where: and(eq(plans.tier, "starter"), eq(plans.isActive, true)),
     })
 
     const userRow = await db.query.users.findFirst({
@@ -248,7 +248,7 @@ export async function POST(req: NextRequest) {
   }
 
   const plan = await db.query.plans.findFirst({
-    where: eq(plans.isActive, true),
+    where: and(eq(plans.tier, "starter"), eq(plans.isActive, true)),
   })
   if (plan) {
     await db.insert(subscriptions).values({

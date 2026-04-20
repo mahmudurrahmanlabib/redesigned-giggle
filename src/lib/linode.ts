@@ -28,7 +28,7 @@ export const SHARED_HOST_STACKSCRIPT = `#!/bin/bash
 # <UDF name="ssh_public_key" label="SSH public key to authorize for root" />
 set -eux
 apt-get update -y
-apt-get install -y docker.io ca-certificates curl
+apt-get install -y docker.io docker-compose-v2 ca-certificates curl
 systemctl enable --now docker
 
 mkdir -p /root/.ssh

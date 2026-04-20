@@ -1,5 +1,5 @@
 import type { InferSelectModel } from "drizzle-orm"
-import { db, instances, instanceLogs, eq } from "@/db"
+import { db, instances, instanceLogs, regions, serverConfigs, eq } from "@/db"
 import { allocatePort, FleetEmptyError, FleetFullError, pickHost } from "@/lib/host-scheduler"
 import {
   sshComposeUp,
@@ -40,9 +40,8 @@ const NEXT_PUBLIC_GATEWAY_BASE_URL = () =>
 
 const OPENROUTER_API_KEY = () => process.env.OPENROUTER_API_KEY || ""
 
-const LINODE_DEFAULT_REGION = "us-east" // Newark
-const LINODE_SHARED_PLAN = "g6-standard-2"
-const LINODE_VPS_DEFAULT_PLAN = "g6-standard-1"
+const LINODE_FALLBACK_REGION = "us-east"
+const LINODE_FALLBACK_PLAN = "g6-standard-2"
 
 /* ------------------------------------------------------------------ */
 /* helpers                                                             */
@@ -204,6 +203,14 @@ async function provisionSharedBot(instance: Instance): Promise<ProvisionResult> 
 const OPENCLAW_DIR = "/opt/openclaw"
 
 async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
+  // Resolve the Linode region and plan from the instance's FK references.
+  const [region, serverConfig] = await Promise.all([
+    db.query.regions.findFirst({ where: eq(regions.id, instance.regionId) }),
+    db.query.serverConfigs.findFirst({ where: eq(serverConfigs.id, instance.serverConfigId) }),
+  ])
+  const linodeRegion = region?.linodeRegion ?? LINODE_FALLBACK_REGION
+  const linodePlan = serverConfig?.linodePlan ?? LINODE_FALLBACK_PLAN
+
   // Idempotency: if this instance already has a linode and it's running, reuse it.
   let linodeId = instance.linodeId ?? undefined
   let ipAddress = instance.ipAddress ?? undefined
@@ -214,8 +221,8 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
 
     const vm = await linodeCreateVM({
       label: `sovereign-vps-${instance.id.slice(0, 8)}`,
-      type: LINODE_VPS_DEFAULT_PLAN,
-      region: LINODE_DEFAULT_REGION,
+      type: linodePlan,
+      region: linodeRegion,
       root_pass: generateRootPassword(),
       stackscript_id: stackScriptId,
       stackscript_data: {

@@ -9,6 +9,7 @@ export type RegionConfig = {
   flag: string
   available: boolean
   sortOrder: number
+  linodeRegion: string
 }
 
 export const REGIONS: readonly RegionConfig[] = [
@@ -19,6 +20,7 @@ export const REGIONS: readonly RegionConfig[] = [
     flag: "🇺🇸",
     available: true,
     sortOrder: 10,
+    linodeRegion: "us-east",
   },
   {
     slug: "us-west-1",
@@ -27,6 +29,7 @@ export const REGIONS: readonly RegionConfig[] = [
     flag: "🇺🇸",
     available: true,
     sortOrder: 20,
+    linodeRegion: "us-west",
   },
   {
     slug: "eu-central-1",
@@ -35,6 +38,7 @@ export const REGIONS: readonly RegionConfig[] = [
     flag: "🇩🇪",
     available: true,
     sortOrder: 30,
+    linodeRegion: "eu-central",
   },
   {
     slug: "eu-west-1",
@@ -43,6 +47,7 @@ export const REGIONS: readonly RegionConfig[] = [
     flag: "🇫🇮",
     available: true,
     sortOrder: 40,
+    linodeRegion: "eu-central",
   },
   {
     slug: "ap-southeast-1",
@@ -51,13 +56,15 @@ export const REGIONS: readonly RegionConfig[] = [
     flag: "🇸🇬",
     available: true,
     sortOrder: 50,
+    linodeRegion: "ap-south",
   },
   {
     slug: "ap-northeast-1",
     name: "Tokyo",
     country: "Japan",
     flag: "🇯🇵",
-    available: false, // soon
+    available: false,
     sortOrder: 60,
+    linodeRegion: "ap-northeast",
   },
 ] as const

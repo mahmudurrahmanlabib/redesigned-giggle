@@ -183,6 +183,7 @@ export const regions = pgTable(
     flag: text().notNull(),
     available: boolean().default(true).notNull(),
     sortOrder: integer().default(0).notNull(),
+    linodeRegion: text().default("us-east").notNull(),
   },
   (t) => [uniqueIndex("Region_slug_key").on(t.slug)],
 )
@@ -201,6 +202,7 @@ export const serverConfigs = pgTable(
     priceYearly: doublePrecision().notNull(),
     sortOrder: integer().default(0).notNull(),
     isActive: boolean().default(true).notNull(),
+    linodePlan: text().default("g6-standard-2").notNull(),
   },
   (t) => [uniqueIndex("ServerConfig_slug_key").on(t.slug)],
 )
