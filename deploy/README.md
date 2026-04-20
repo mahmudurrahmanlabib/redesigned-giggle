@@ -6,30 +6,31 @@ with the Next.js standalone server managed by **pm2** or **systemd**.
 The Docker path (`docker compose up -d`) still works and is unchanged —
 pick one.
 
+## Env policy — read this once
+
+The app loads **exactly one env file: `.env` at the repo root**. Next.js'
+multi-file layering (`.env.local`, `.env.production`, ...) has bitten
+this project in production and is now explicitly banned:
+
+- `.gitignore` ignores all of them.
+- `deploy/pm2.config.cjs` refuses to start if any of them exist on disk.
+- The bootstrap script refuses to run if any of them exist.
+
+If you need a different value per environment, change `.env` on that
+box. Don't create a second env file.
+
 ## 1. Prerequisites on the VPS
 
 ```bash
 # Node 20 (NodeSource)
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
+sudo apt-get install -y nodejs postgresql
 
-# Postgres 16 (or use the managed one you already have)
-sudo apt-get install -y postgresql
-
-# Either pm2 or systemd is fine — only one.
-sudo npm i -g pm2    # skip if using systemd
+# pm2 for process management
+sudo npm i -g pm2
 ```
 
-## 2. Database
-
-```bash
-sudo -u postgres psql <<'SQL'
-CREATE USER giggle WITH PASSWORD 'change-me';
-CREATE DATABASE giggle OWNER giggle;
-SQL
-```
-
-## 3. App
+## 2. Clone + install
 
 ```bash
 sudo mkdir -p /opt/redesigned-giggle /var/log/redesigned-giggle
@@ -38,29 +39,38 @@ sudo chown -R $USER /opt/redesigned-giggle /var/log/redesigned-giggle
 git clone <repo> /opt/redesigned-giggle
 cd /opt/redesigned-giggle
 npm ci --no-audit --no-fund
-npx prisma generate
-npm run build              # safe with no DB — admin/dashboard are force-dynamic
 ```
 
-## 4. Environment
-
-Create `/etc/redesigned-giggle.env` (chmod 600):
-
-```
-DATABASE_URL=postgresql://giggle:change-me@127.0.0.1:5432/giggle?schema=public
-AUTH_SECRET=<openssl rand -base64 32>
-NEXTAUTH_URL=https://your-domain.example
-# ...any other runtime secrets (STRIPE_*, RESEND_*, etc.)
-```
-
-## 5. Run migrations
+## 3. Bootstrap Postgres + .env + schema — one command
 
 ```bash
-set -a; . /etc/redesigned-giggle.env; set +a
-npm run deploy:migrate
+bash scripts/bootstrap-pg.sh
 ```
 
-## 6. Start — pick one
+That script is idempotent and does everything the old runbook did by hand:
+
+- Verifies Postgres is reachable as the `postgres` superuser.
+- Sanity-checks `pg_hba.conf` — if `127.0.0.1/32` is using
+  `peer`/`ident`/`trust`, prompts to patch it to `scram-sha-256` and
+  reload Postgres (password auth silently fails otherwise).
+- Creates/aligns the `sovereignml` role + database.
+- Writes `.env` (mode 600) with a matching `DATABASE_URL` and an
+  `AUTH_SECRET` if one isn't already set. Re-runs preserve the existing
+  password.
+- Smoke-tests the connection with `psql`.
+- Syncs the schema with `prisma db push`.
+- `DB_SEED=1 bash scripts/bootstrap-pg.sh` also runs the seed.
+
+Add any other secrets you need (`NEXTAUTH_URL`, `STRIPE_*`, `RESEND_*`,
+...) to `.env` after the script finishes.
+
+## 4. Build
+
+```bash
+npm run build       # admin/dashboard are force-dynamic, safe with no DB
+```
+
+## 5. Start — pick one
 
 ### pm2
 
@@ -68,6 +78,7 @@ npm run deploy:migrate
 pm2 start deploy/pm2.config.cjs
 pm2 save
 pm2 startup          # follow the printed command once, for boot persistence
+pm2 logs redesigned-giggle
 ```
 
 ### systemd
@@ -83,19 +94,31 @@ sudo systemctl enable --now redesigned-giggle
 journalctl -u redesigned-giggle -f
 ```
 
-## 7. Upgrades
+## 6. Upgrades
 
 ```bash
 cd /opt/redesigned-giggle
 git pull
 npm ci --no-audit --no-fund
-npx prisma generate
+bash scripts/bootstrap-pg.sh        # idempotent: syncs schema, preserves .env
 npm run build
-npm run deploy:migrate
 pm2 restart redesigned-giggle       # or: sudo systemctl restart redesigned-giggle
 ```
 
-## 8. Reverse proxy
+## 7. Reverse proxy
 
 Point nginx / Cloudflare Tunnel at `127.0.0.1:3000`. Standard Next.js
 reverse-proxy setup — no special headers required beyond `X-Forwarded-*`.
+
+## Troubleshooting
+
+- **`[pm2 guard] Refusing to start: ... these files exist`** — you have
+  a stray `.env.production` or `.env.local`. Copy anything you need into
+  `.env` and delete the others.
+- **`Authentication failed against the database server`** — the
+  `DATABASE_URL` password doesn't match the Postgres role's password.
+  Re-run `bash scripts/bootstrap-pg.sh` — it re-aligns them.
+- **pg_hba peer/ident/trust** — the bootstrap script offers to patch
+  this. If you declined, edit `/etc/postgresql/*/main/pg_hba.conf`,
+  change the `127.0.0.1/32` line to `scram-sha-256`, and
+  `sudo systemctl reload postgresql`.

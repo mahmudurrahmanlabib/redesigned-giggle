@@ -1,16 +1,21 @@
 import NextAuth from "next-auth"
 import Credentials from "next-auth/providers/credentials"
 import Google from "next-auth/providers/google"
-import { PrismaAdapter } from "@auth/prisma-adapter"
+import { DrizzleAdapter } from "@auth/drizzle-adapter"
 import authConfig from "./auth.config"
-import { prisma } from "@/lib/prisma"
+import { db, users, accounts, sessions, verificationTokens, eq } from "@/db"
 import { verifyPassword } from "@/lib/password"
 import { isGoogleOAuthConfigured } from "@/lib/google-oauth"
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   trustHost: true,
-  adapter: PrismaAdapter(prisma),
+  adapter: DrizzleAdapter(db, {
+    usersTable: users,
+    accountsTable: accounts,
+    sessionsTable: sessions,
+    verificationTokensTable: verificationTokens,
+  }),
   providers: [
     ...(isGoogleOAuthConfigured()
       ? [
@@ -29,8 +34,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null
 
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email as string },
+        const user = await db.query.users.findFirst({
+          where: eq(users.email, credentials.email as string),
         })
 
         if (!user || !user.hashedPassword) return null
@@ -55,19 +60,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   callbacks: {
     ...authConfig.callbacks,
     async jwt({ token, user, account }) {
-      // On first sign-in, persist user data to token (OAuth may surface `sub` before `id` is normalized)
       if (user) {
         const u = user as { id?: string; sub?: string }
         token.id = u.id ?? u.sub ?? (token.id as string | undefined) ?? token.sub
         token.role = (user as { role?: string }).role || "user"
       }
-      // For OAuth users, fetch role + ban status from DB
       if (account?.provider === "google" && user) {
-        const dbUser = await prisma.user.findUnique({
-          where: { id: user.id as string },
-          select: { role: true, isBanned: true },
+        const dbUser = await db.query.users.findFirst({
+          where: eq(users.id, user.id as string),
+          columns: { role: true, isBanned: true },
         })
-        if (dbUser?.isBanned) return token // Will be caught by authorized callback
+        if (dbUser?.isBanned) return token
         token.role = dbUser?.role || "user"
       }
       return token
