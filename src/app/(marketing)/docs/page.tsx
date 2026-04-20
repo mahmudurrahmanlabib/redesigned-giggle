@@ -43,7 +43,7 @@ const faqItems = [
   {
     question: "What regions are available for deployment?",
     answer:
-      "We currently offer 5 active regions: US East (Ashburn), US West (Hillsboro), EU Frankfurt, EU Helsinki, and Singapore. Tokyo (AP Northeast) is coming soon. You can choose the region closest to your users for optimal latency.",
+      "We currently offer 5 active regions: US East (Newark), US West (Fremont), EU Central (Frankfurt), EU West (London), and AP South (Singapore). Tokyo (AP Northeast) is coming soon. You can choose the region closest to your users for optimal latency.",
   },
 ]
 

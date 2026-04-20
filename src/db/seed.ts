@@ -12,6 +12,7 @@ import {
   serverConfigs,
   plans,
   pool,
+  notInArray,
 } from "./index"
 
 async function main() {
@@ -55,6 +56,13 @@ async function main() {
       })
   }
 
+  // Deactivate regions no longer in the config
+  const regionSlugs = REGIONS.map((r) => r.slug)
+  await db
+    .update(regions)
+    .set({ available: false })
+    .where(notInArray(regions.slug, regionSlugs))
+
   // 3. Server configs
   for (const config of SERVER_TYPES) {
     await db
@@ -88,6 +96,13 @@ async function main() {
         },
       })
   }
+
+  // Deactivate server configs no longer in the config
+  const serverSlugs = SERVER_TYPES.map((s) => s.slug)
+  await db
+    .update(serverConfigs)
+    .set({ isActive: false })
+    .where(notInArray(serverConfigs.slug, serverSlugs))
 
   // 4. Subscription plans
   const CREDITS_PER_PERIOD: Record<string, number> = {

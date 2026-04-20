@@ -11,6 +11,8 @@ import { selectSkills } from "@/configs/skill-map"
 import { generateSoul } from "@/lib/soul"
 import { routeModel } from "@/lib/model-router"
 import { provisionBot } from "@/lib/provisioner"
+import { describeLinodeError } from "@/lib/linode"
+import { isDomainVerified, recordName, expectedValue, getOrCreateVerification } from "@/lib/domain-verify"
 
 export async function POST(req: NextRequest) {
   const session = await auth()
@@ -51,6 +53,22 @@ export async function POST(req: NextRequest) {
     if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(trimmed)) {
       return NextResponse.json({ error: "Invalid domain" }, { status: 400 })
     }
+    // Require a verified TXT record before attaching a domain to an instance.
+    // Prevents drive-by squatting: if you didn't prove ownership, we won't
+    // hand Let's Encrypt our IP for your domain.
+    const verified = await isDomainVerified(session.user.id, trimmed)
+    if (!verified) {
+      const v = await getOrCreateVerification(session.user.id, trimmed)
+      return NextResponse.json(
+        {
+          error: "Domain ownership not verified",
+          hint: `Publish a TXT record: ${recordName(trimmed)}  "${expectedValue(v.nonce)}"`,
+          recordName: v.recordName,
+          expectedValue: v.expectedValue,
+        },
+        { status: 422 },
+      )
+    }
     normalizedDomain = trimmed
   }
 
@@ -65,6 +83,27 @@ export async function POST(req: NextRequest) {
   const isVps = parsedAgentConfig?.ok
     ? parsedAgentConfig.data.deployment_target === "vps"
     : !!regionSlug
+
+  // Pre-flight: VPS path requires real Linode credentials + fleet SSH keys.
+  // Bail out before inserting the instance row so we don't leave orphan
+  // `provisioning` rows when the server is misconfigured.
+  if (isVps) {
+    const required = [
+      "LINODE_API_TOKEN",
+      "SSH_FLEET_PRIVATE_KEY",
+      "SSH_FLEET_PUBLIC_KEY",
+      "OPENROUTER_API_KEY",
+      "INSTANCE_ENCRYPTION_KEY",
+    ]
+    const missing = required.filter((k) => !process.env[k])
+    if (missing.length > 0) {
+      console.error("[deploy] VPS provisioning not configured; missing env:", missing.join(", "))
+      return NextResponse.json(
+        { error: "VPS provisioning is not configured on this server" },
+        { status: 503 }
+      )
+    }
+  }
 
   let region, serverConfig
 
@@ -171,7 +210,7 @@ export async function POST(req: NextRequest) {
       sshKeyId,
       storageGb: serverConfig.storageGb + extraStorageGb,
       billingInterval,
-      status: "provisioning",
+      status: "pending",
       rootPasswordEnc: rootPassword ? encryptRootPassword(rootPassword) : undefined,
       domain: normalizedDomain,
       ...agentFields,
@@ -240,7 +279,7 @@ export async function POST(req: NextRequest) {
         planSlug: plan?.slug ?? "starter",
         interval: billingInterval,
       },
-      success_url: `${BRANDING.appUrl}/dashboard/instances?deployed=${instance.id}`,
+      success_url: `${BRANDING.appUrl}/dashboard/instances/${instance.id}`,
       cancel_url: `${BRANDING.appUrl}/dashboard/deploy`,
     })
 
@@ -251,44 +290,47 @@ export async function POST(req: NextRequest) {
   }
 
   // Dev mode: skip Stripe, auto-activate.
-  try {
-    const freshInstance = await db.query.instances.findFirst({
-      where: eq(instances.id, instance.id),
-    })
-    if (freshInstance) {
-      await provisionBot(freshInstance)
+  // Fire provisioning async so the HTTP response returns immediately.
+  // The frontend polls /api/instances/[id]/status for progress.
+  const instanceId = instance.id
+  const userId = session.user.id
+
+  ;(async () => {
+    try {
+      const freshInstance = await db.query.instances.findFirst({
+        where: eq(instances.id, instanceId),
+      })
+      if (freshInstance) {
+        // provisionBot owns all state transitions + rollback internally.
+        // We just surface the error to logs here.
+        await provisionBot(freshInstance)
+      }
+    } catch (err) {
+      console.error(
+        "[deploy] provisionBot failed (dev path):",
+        describeLinodeError(err),
+      )
     }
-  } catch (err) {
-    console.error("[deploy] provisionBot failed (dev path):", err)
-    await db
-      .update(instances)
-      .set({ status: "failed" })
-      .where(eq(instances.id, instance.id))
-    await db.insert(instanceLogs).values({
-      instanceId: instance.id,
-      level: "error",
-      message: `Provisioning failed: ${err instanceof Error ? err.message : String(err)}`,
-    })
-  }
+  })()
 
   const plan = await db.query.plans.findFirst({
     where: and(eq(plans.tier, "starter"), eq(plans.isActive, true)),
   })
   if (plan) {
     await db.insert(subscriptions).values({
-      userId: session.user.id,
+      userId,
       planId: plan.id,
-      instanceId: instance.id,
+      instanceId,
       interval: billingInterval,
       status: "active",
     })
   }
 
   await db.insert(instanceLogs).values({
-    instanceId: instance.id,
+    instanceId,
     level: "info",
     message: "Dev mode: instance auto-activated (Stripe not configured).",
   })
 
-  return NextResponse.json({ instanceId: instance.id })
+  return NextResponse.json({ instanceId })
 }

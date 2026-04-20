@@ -1,12 +1,20 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/auth"
-import { db, instances, instanceLogs, subscriptions, eq } from "@/db"
+import { db, instances, subscriptions, eq } from "@/db"
 import { deleteBot } from "@/lib/provisioner"
+import { IllegalTransitionError } from "@/lib/instance-state"
 import { stripe, isStripeConfigured } from "@/lib/stripe"
 
+// POST /api/instances/:instanceId/delete
+//
+// Authoritative delete. On success returns:
+//   200 { status: "deleted" }  — Linode VM is gone, DB row is deleted.
+//   202 { status: "pending" }  — retries exhausted; reconciler will sweep.
+//
+// Errors are surfaced; we no longer silently mark the row deleted.
 export async function POST(
   _req: NextRequest,
-  { params }: { params: Promise<{ instanceId: string }> }
+  { params }: { params: Promise<{ instanceId: string }> },
 ) {
   const session = await auth()
   if (!session?.user?.id) {
@@ -19,7 +27,6 @@ export async function POST(
   const instance = await db.query.instances.findFirst({
     where: eq(instances.id, instanceId),
   })
-
   if (!instance) {
     return NextResponse.json({ error: "Instance not found" }, { status: 404 })
   }
@@ -27,20 +34,22 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
 
+  let result
   try {
-    await deleteBot(instance)
+    result = await deleteBot(instance)
   } catch (err) {
-    console.error(`[delete] provisioner cleanup failed for ${instanceId}:`, err)
-    // Non-fatal — we still want the DB record to reflect deletion.
+    if (err instanceof IllegalTransitionError) {
+      // Row is already deleting/deleted — this is a double-click, treat as OK.
+      return NextResponse.json({ status: "already_deleting" }, { status: 200 })
+    }
+    console.error(`[delete] deleteBot failed for ${instanceId}:`, err)
+    return NextResponse.json(
+      { error: "Delete failed", detail: (err as Error).message },
+      { status: 500 },
+    )
   }
 
-  await db.insert(instanceLogs).values({
-    instanceId,
-    level: "warn",
-    message: `Instance deleted by ${isAdmin ? "admin" : "user"}.`,
-  })
-
-  // Cancel linked subscription if exists
+  // Cancel linked subscription regardless — the row is at least in `deleting`.
   const sub = await db.query.subscriptions.findFirst({
     where: eq(subscriptions.instanceId, instanceId),
   })
@@ -58,5 +67,7 @@ export async function POST(
       .where(eq(subscriptions.id, sub.id))
   }
 
-  return NextResponse.json({ success: true })
+  return NextResponse.json(result, {
+    status: result.status === "deleted" ? 200 : 202,
+  })
 }

@@ -6,9 +6,6 @@ import { routeModel } from "@/lib/model-router"
 type Instance = InferSelectModel<typeof instances>
 import type { BudgetTier } from "@/lib/agent-config"
 
-export const OPENCLAW_IMAGE = () =>
-  process.env.OPENCLAW_IMAGE || "openclaw/openclaw:latest"
-
 const PASSWORD_ALPHABET =
   "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
 
@@ -20,6 +17,16 @@ export function generateAdminPassword(length = 24): string {
   }
   return out
 }
+
+export function generateGatewayToken(length = 32): string {
+  return crypto.randomBytes(length).toString("hex")
+}
+
+export const OPENCLAW_VERSION = () =>
+  process.env.OPENCLAW_VERSION || "latest"
+
+export const OPENCLAW_GATEWAY_PORT = 18789
+export const OPENCLAW_SERVICE_NAME = "openclaw-gateway"
 
 export type OpenclawEnv = Record<string, string>
 
@@ -47,60 +54,92 @@ export function buildOpenclawEnv(args: {
 }
 
 /**
- * Render the docker-compose.yml that runs on the agent VPS.
- * OpenClaw listens on 8080 inside the caddy network; Caddy exposes 80/443.
+ * Generate OpenClaw Gateway config.json5.
+ * The gateway binds to loopback only; Caddy handles public TLS termination.
  */
-export function renderComposeFile(opts: { image?: string } = {}): string {
-  const image = opts.image ?? OPENCLAW_IMAGE()
-  return `services:
-  openclaw:
-    image: ${image}
-    restart: always
-    env_file: .env
-    expose:
-      - "8080"
-    networks:
-      - web
-  caddy:
-    image: caddy:2-alpine
-    restart: always
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - openclaw
-    networks:
-      - web
-networks:
-  web: {}
-volumes:
-  caddy_data: {}
-  caddy_config: {}
+export function renderOpenclawConfig(args: {
+  gatewayToken: string
+  openRouterApiKey: string
+  model: string
+  fallbackModel: string
+  soulMd?: string | null
+}): string {
+  const soul = args.soulMd ?? "You are a helpful assistant."
+  return `{
+  gateway: {
+    port: ${OPENCLAW_GATEWAY_PORT},
+    bind: "loopback",
+    auth: {
+      token: ${JSON.stringify(args.gatewayToken)},
+    },
+  },
+  providers: {
+    openrouter: {
+      apiKey: ${JSON.stringify(args.openRouterApiKey)},
+    },
+  },
+  agents: {
+    list: [
+      {
+        name: "default",
+        model: ${JSON.stringify(args.model)},
+        fallbackModel: ${JSON.stringify(args.fallbackModel)},
+        systemPrompt: ${JSON.stringify(soul)},
+      },
+    ],
+  },
+}
 `
 }
 
 /**
- * Caddy issues Let's Encrypt automatically once DNS resolves.
- * If no domain is provided we fall back to serving on :80 on the server IP.
+ * Caddy reverse-proxies to the OpenClaw Gateway on loopback.
+ * With a domain, Caddy auto-provisions Let's Encrypt TLS.
+ * Without a domain, Caddy serves HTTP on :80.
  */
 export function renderCaddyfile(args: { domain?: string | null }): string {
   if (args.domain && args.domain.trim().length > 0) {
     return `${args.domain} {
-  reverse_proxy openclaw:8080
+  reverse_proxy localhost:${OPENCLAW_GATEWAY_PORT}
 }
 `
   }
   return `:80 {
-  reverse_proxy openclaw:8080
+  reverse_proxy localhost:${OPENCLAW_GATEWAY_PORT}
 }
 `
 }
 
-export function renderDotenv(env: OpenclawEnv): string {
+/**
+ * systemd unit for the OpenClaw Gateway daemon.
+ * Runs as the dedicated `openclaw` user created by the StackScript.
+ */
+export function renderSystemdUnit(): string {
+  return `[Unit]
+Description=OpenClaw Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openclaw
+Group=openclaw
+WorkingDirectory=/opt/openclaw
+EnvironmentFile=/opt/openclaw/.env
+Environment=NODE_COMPILE_CACHE=/var/tmp/openclaw-compile-cache
+Environment=OPENCLAW_NO_RESPAWN=1
+Environment=HOME=/opt/openclaw
+ExecStart=/usr/bin/openclaw gateway --config /opt/openclaw/config.json5
+Restart=always
+RestartSec=2
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target
+`
+}
+
+export function renderEnvFile(env: OpenclawEnv): string {
   return (
     Object.entries(env)
       .map(([k, v]) => `${k}=${dotenvEscape(v)}`)

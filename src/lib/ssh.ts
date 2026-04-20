@@ -10,7 +10,6 @@ function loadPrivateKey(): string {
   if (!raw) {
     throw new Error("SSH_FLEET_PRIVATE_KEY is not set")
   }
-  // Allow literal `\n` in .env by normalizing.
   return raw.includes("\\n") ? raw.replace(/\\n/g, "\n") : raw
 }
 
@@ -38,6 +37,102 @@ export async function sshRun(target: SshTarget, command: string): Promise<SshRun
   }
 }
 
+function shellEscape(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+/**
+ * Wait for StackScript to finish installing OpenClaw.
+ * Polls `openclaw --version` over SSH until it succeeds or timeout.
+ */
+export async function sshWaitForOpenclaw(
+  target: SshTarget,
+  timeoutMs = 300_000,
+  pollMs = 5_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  let lastErr: unknown
+  while (Date.now() < deadline) {
+    try {
+      const r = await sshRun(target, "command -v openclaw >/dev/null && openclaw --version")
+      if (r.code === 0) return
+    } catch (err) {
+      lastErr = err
+    }
+    await new Promise((r) => setTimeout(r, pollMs))
+  }
+  throw new Error(
+    `openclaw never became available on ${target.host} within ${timeoutMs}ms` +
+      (lastErr ? `; last ssh error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}` : ""),
+  )
+}
+
+/**
+ * Phase 5 hard gate: run OpenClaw in the background, verify it responds
+ * to a health check on loopback, then kill the test process.
+ * Validates the binary works before systemd is involved.
+ */
+export async function sshValidateOpenclawBinary(
+  target: SshTarget,
+  port: number,
+  timeoutSec = 10,
+): Promise<void> {
+  const startCmd = [
+    `sudo -u openclaw bash -c 'OPENCLAW_GATEWAY_PORT=${port} openclaw gateway &'`,
+    `sleep ${timeoutSec}`,
+    `curl -sf http://127.0.0.1:${port}/health`,
+  ].join(" && ")
+  const killCmd = `pkill -f 'openclaw gateway' || true`
+
+  try {
+    const result = await sshRun(target, startCmd)
+    if (result.code !== 0 && result.code !== null) {
+      throw new Error(
+        `OpenClaw binary validation failed (exit ${result.code}): ${result.stderr || result.stdout}`,
+      )
+    }
+  } finally {
+    await sshRun(target, killCmd).catch(() => {})
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* systemctl helpers                                                    */
+/* ------------------------------------------------------------------ */
+
+export async function sshSystemctlStart(target: SshTarget, service: string): Promise<SshRunResult> {
+  return sshRun(target, `systemctl start ${shellEscape(service)}`)
+}
+
+export async function sshSystemctlStop(target: SshTarget, service: string): Promise<SshRunResult> {
+  return sshRun(target, `systemctl stop ${shellEscape(service)}`)
+}
+
+export async function sshSystemctlRestart(target: SshTarget, service: string): Promise<SshRunResult> {
+  return sshRun(target, `systemctl restart ${shellEscape(service)}`)
+}
+
+export async function sshSystemctlEnable(target: SshTarget, service: string): Promise<SshRunResult> {
+  return sshRun(target, `systemctl enable ${shellEscape(service)}`)
+}
+
+export async function sshSystemctlStatus(target: SshTarget, service: string): Promise<SshRunResult> {
+  return sshRun(target, `systemctl is-active ${shellEscape(service)}`)
+}
+
+/**
+ * Write Caddyfile and reload the Caddy service.
+ */
+export async function sshInstallCaddyfile(target: SshTarget, content: string): Promise<SshRunResult> {
+  const writeResult = await sshWriteFile(target, "/etc/caddy/Caddyfile", content)
+  if (writeResult.code !== 0 && writeResult.code !== null) return writeResult
+  return sshRun(target, "systemctl reload caddy")
+}
+
+/* ------------------------------------------------------------------ */
+/* Docker helpers (shared-cluster path only; VPS uses systemd above)   */
+/* ------------------------------------------------------------------ */
+
 export type DockerRunOpts = {
   image: string
   containerName: string
@@ -46,11 +141,6 @@ export type DockerRunOpts = {
   env: Record<string, string>
   restart?: "always" | "unless-stopped" | "no"
   pullFirst?: boolean
-}
-
-function shellEscape(value: string): string {
-  // Single-quote and escape embedded single quotes for bash.
-  return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 function buildDockerRunCmd(opts: DockerRunOpts): string {
@@ -100,10 +190,13 @@ export async function sshDockerRm(target: SshTarget, containerName: string): Pro
   return sshRun(target, `docker rm -f ${shellEscape(containerName)}`)
 }
 
+/* ------------------------------------------------------------------ */
+/* file + firewall helpers (unchanged)                                 */
+/* ------------------------------------------------------------------ */
+
 /**
- * Write a file on the remote host. Creates parent dirs. Uses heredoc over
- * ssh so we don't need scp on the target. Contents are base64-encoded in
- * transit to preserve arbitrary bytes (including quotes and newlines).
+ * Write a file on the remote host. Creates parent dirs. Contents are
+ * base64-encoded in transit to preserve arbitrary bytes.
  */
 export async function sshWriteFile(
   target: SshTarget,
@@ -121,14 +214,6 @@ export async function sshWriteFile(
     .filter(Boolean)
     .join(" && ")
   return sshRun(target, cmd)
-}
-
-/** Run `docker compose up -d` in the given directory on the remote host. */
-export async function sshComposeUp(target: SshTarget, dir: string): Promise<SshRunResult> {
-  return sshRun(
-    target,
-    `cd ${shellEscape(dir)} && docker compose pull && docker compose up -d --remove-orphans`
-  )
 }
 
 /** Idempotent ufw bootstrap: allow ssh/http/https and enable. */

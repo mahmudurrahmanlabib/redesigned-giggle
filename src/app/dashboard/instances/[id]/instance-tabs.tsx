@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useTransition } from "react"
+import { useCallback, useEffect, useRef, useState, useTransition } from "react"
 import { useRouter, usePathname } from "next/navigation"
 
 type InstanceLite = {
@@ -13,39 +13,104 @@ type InstanceLite = {
   vcpu: number
   ramGb: number
   createdAt: string
-  gatewayUrl: string
   domain: string | null
-  dnsStatus: string
-  tlsStatus: string
+  dnsStatus: string | null
+  tlsStatus: string | null
   openclawAdminEmail: string | null
   hasOpenclawPassword: boolean
 }
 
 type LogLite = { id: string; level: string; message: string; createdAt: string }
 
+type StatusPayload = {
+  status: string
+  ipAddress: string | null
+  dnsStatus: string | null
+  tlsStatus: string | null
+  logs: LogLite[]
+}
+
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "controls", label: "Controls" },
-  { id: "ai-config", label: "AI Config" },
   { id: "interfaces", label: "Interfaces" },
-  { id: "skills", label: "Skills" },
-  { id: "monitoring", label: "Monitoring" },
   { id: "logs", label: "Logs" },
-  { id: "webhooks", label: "Webhooks" },
-  { id: "env", label: "Env Vars" },
-  { id: "usage", label: "Usage" },
   { id: "danger", label: "Danger Zone" },
 ] as const
 
+function useInstancePolling(instance: InstanceLite, initialLogs: LogLite[]) {
+  const [status, setStatus] = useState(instance.status)
+  const [ipAddress, setIpAddress] = useState(instance.ipAddress)
+  const [dnsStatus, setDnsStatus] = useState(instance.dnsStatus)
+  const [tlsStatus, setTlsStatus] = useState(instance.tlsStatus)
+  const [logs, setLogs] = useState(initialLogs)
+  const router = useRouter()
+  const prevStatus = useRef(instance.status)
+
+  // Poll while the row is moving through any non-terminal transition state.
+  const isPolling =
+    status === "pending" || status === "provisioning" || status === "deleting"
+
+  useEffect(() => {
+    if (!isPolling) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    async function poll() {
+      try {
+        const r = await fetch(`/api/instances/${instance.id}/status`, { cache: "no-store" })
+        if (!r.ok || cancelled) return
+        const data: StatusPayload = await r.json()
+        setStatus(data.status)
+        setIpAddress(data.ipAddress)
+        setDnsStatus(data.dnsStatus)
+        setTlsStatus(data.tlsStatus)
+        setLogs(data.logs)
+
+        const wasTransient =
+          prevStatus.current === "pending" ||
+          prevStatus.current === "provisioning" ||
+          prevStatus.current === "deleting"
+        const nowTransient =
+          data.status === "pending" ||
+          data.status === "provisioning" ||
+          data.status === "deleting"
+        if (!nowTransient && wasTransient) {
+          prevStatus.current = data.status
+          router.refresh()
+          return
+        }
+      } catch {
+        /* network error — retry next interval */
+      }
+      if (!cancelled) {
+        timer = setTimeout(poll, 3_000)
+      }
+    }
+
+    timer = setTimeout(poll, 1_500)
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [instance.id, isPolling, router])
+
+  return {
+    instance: { ...instance, status, ipAddress, dnsStatus, tlsStatus },
+    logs,
+  }
+}
+
 export function InstanceTabs({
   active,
-  instance,
-  logs,
+  instance: initialInstance,
+  logs: initialLogs,
 }: {
   active: string
   instance: InstanceLite
   logs: LogLite[]
 }) {
+  const { instance, logs } = useInstancePolling(initialInstance, initialLogs)
   const router = useRouter()
   const pathname = usePathname()
 
@@ -73,14 +138,8 @@ export function InstanceTabs({
 
       {active === "overview" && <OverviewTab instance={instance} logs={logs} />}
       {active === "controls" && <ControlsTab instance={instance} />}
-      {active === "ai-config" && <AiConfigTab />}
       {active === "interfaces" && <InterfacesTab instance={instance} />}
-      {active === "skills" && <SkillsTab />}
-      {active === "monitoring" && <MonitoringTab instance={instance} />}
-      {active === "logs" && <LogsTab />}
-      {active === "webhooks" && <WebhooksTab />}
-      {active === "env" && <EnvTab />}
-      {active === "usage" && <UsageTab />}
+      {active === "logs" && <LogsTab logs={logs} />}
       {active === "danger" && <DangerTab instance={instance} />}
     </div>
   )
@@ -106,14 +165,6 @@ function Stat({ label, value }: { label: string; value: string }) {
   )
 }
 
-function Dummy({ note }: { note?: string }) {
-  return (
-    <p className="text-xs text-amber-400/80 font-mono mt-2">
-      ⚠ dummy data — backend not wired yet{note ? ` · ${note}` : ""}
-    </p>
-  )
-}
-
 /* ───────────── DNS SETUP CARD ───────────── */
 function DnsCard({ instance }: { instance: InstanceLite }) {
   const [dnsStatus, setDnsStatus] = useState(instance.dnsStatus)
@@ -129,9 +180,9 @@ function DnsCard({ instance }: { instance: InstanceLite }) {
       try {
         const r = await fetch(`/api/instances/${instance.id}/dns-status`, { cache: "no-store" })
         const j = (await r.json()) as {
-          dnsStatus: string
-          tlsStatus: string
-          resolvedIps: string[]
+          dnsStatus: string | null
+          tlsStatus: string | null
+          resolvedIps?: string[]
         }
         if (cancelled) return
         setDnsStatus(j.dnsStatus)
@@ -207,13 +258,13 @@ function DnsCard({ instance }: { instance: InstanceLite }) {
             <span className="text-[var(--text-secondary)]">
               DNS:{" "}
               <span className={dnsStatus === "ready" ? "text-[var(--accent-color)]" : "text-amber-400"}>
-                {dnsStatus}
+                {dnsStatus ?? "pending"}
               </span>
             </span>
             <span className="text-[var(--text-secondary)]">
               TLS:{" "}
               <span className={tlsStatus === "issued" ? "text-[var(--accent-color)]" : "text-amber-400"}>
-                {tlsStatus}
+                {tlsStatus ?? "pending"}
               </span>
             </span>
             {resolvedIps.length > 0 && (
@@ -334,72 +385,148 @@ function Row({
   )
 }
 
+/* ───────────── PROVISIONING CARD ───────────── */
+const PROVISION_STEPS = [
+  { key: "Creating Linode VM", label: "Creating VM" },
+  { key: "Waiting for server to boot", label: "Booting server" },
+  { key: "Waiting for Docker", label: "Installing Docker" },
+  { key: "Server online", label: "Server online" },
+  { key: "Configuring firewall", label: "Configuring firewall" },
+  { key: "Writing OpenClaw", label: "Writing configuration" },
+  { key: "Starting OpenClaw", label: "Starting stack" },
+  { key: "Deployment complete", label: "Deployment complete" },
+  { key: "Starting provisioning", label: "Initializing" },
+  { key: "Selecting shared host", label: "Selecting host" },
+  { key: "Starting bot container", label: "Starting container" },
+  { key: "Mock-provisioned", label: "Provisioned" },
+] as const
+
+function ProvisioningCard({ instance, logs }: { instance: InstanceLite; logs: LogLite[] }) {
+  const logMessages = logs.map((l) => l.message)
+  const isFailed = instance.status === "failed_provisioning"
+  const isRunning = instance.status === "running"
+
+  const steps = PROVISION_STEPS.filter((s) =>
+    logMessages.some((m) => m.includes(s.key))
+  )
+
+  const lastError = logs.find((l) => l.level === "error")
+
+  return (
+    <Card title={isFailed ? "Provisioning Failed" : isRunning ? "Provisioning Complete" : "Provisioning"}>
+      <div className="space-y-3">
+        {steps.length === 0 && !isFailed && !isRunning && (
+          <div className="flex items-center gap-3">
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+            <span className="text-sm text-[var(--text-secondary)]">Preparing deployment...</span>
+          </div>
+        )}
+        {steps.map((step, i) => {
+          const isLast = i === steps.length - 1
+          const isDone = !isLast || isRunning
+          return (
+            <div key={step.key} className="flex items-center gap-3">
+              {isDone ? (
+                <span className="w-4 h-4 flex items-center justify-center text-[10px] font-bold border border-[var(--accent-color)] bg-[var(--accent-color)] text-black">
+                  &#10003;
+                </span>
+              ) : (
+                <span className="w-4 h-4 flex items-center justify-center">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                </span>
+              )}
+              <span className={`text-sm ${isDone ? "text-[var(--text-primary)]" : "text-amber-400"}`}>
+                {step.label}
+              </span>
+            </div>
+          )
+        })}
+        {isFailed && lastError && (
+          <div className="mt-2 p-3 bg-red-500/10 border border-red-500/30">
+            <p className="text-xs font-mono text-red-400">{lastError.message}</p>
+          </div>
+        )}
+        {isRunning && (
+          <p className="text-xs font-mono text-[var(--accent-color)] mt-2">
+            Agent is live and ready to accept requests.
+          </p>
+        )}
+        {!isFailed && !isRunning && (
+          <p className="text-[10px] font-mono text-[var(--text-secondary)]/70 mt-2">
+            Polling every 3s for updates...
+          </p>
+        )}
+      </div>
+    </Card>
+  )
+}
+
 /* ───────────── OVERVIEW ───────────── */
 function OverviewTab({ instance, logs }: { instance: InstanceLite; logs: LogLite[] }) {
+  const isProvisioning =
+    instance.status === "pending" || instance.status === "provisioning"
+  const isFailed = instance.status === "failed_provisioning"
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      <div className="lg:col-span-2 space-y-4">
-        {instance.domain && <DnsCard instance={instance} />}
-        {instance.hasOpenclawPassword && <CredentialsCard instanceId={instance.id} domain={instance.domain} ipAddress={instance.ipAddress} />}
-        <Card title="Health">
-          <div className="grid grid-cols-4 gap-4">
-            <Stat label="Status" value={instance.status} />
-            <Stat label="Uptime 24h" value="99.9%" />
-            <Stat label="Uptime 7d" value="99.7%" />
-            <Stat label="Last Heartbeat" value="2s ago" />
-          </div>
-          <Dummy note="Uptime Kuma integration pending" />
-        </Card>
+    <div className="space-y-4 max-w-4xl">
+      {(isProvisioning || (isFailed && !instance.ipAddress)) && (
+        <ProvisioningCard instance={instance} logs={logs} />
+      )}
+      {/* DNS card only renders when a domain is explicitly configured. */}
+      {instance.domain && instance.status === "running" && <DnsCard instance={instance} />}
+      {instance.hasOpenclawPassword && instance.status === "running" && (
+        <CredentialsCard
+          instanceId={instance.id}
+          domain={instance.domain}
+          ipAddress={instance.ipAddress}
+        />
+      )}
 
-        <Card title="Infrastructure">
-          <div className="grid grid-cols-4 gap-4">
-            <Stat label="Region" value={instance.regionLabel} />
-            <Stat label="Server" value={instance.serverLabel} />
-            <Stat label="Specs" value={`${instance.vcpu} vCPU · ${instance.ramGb} GB`} />
-            <Stat label="IP" value={instance.ipAddress || "—"} />
-          </div>
-        </Card>
+      <Card title="Deployment">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Stat label="Status" value={instance.status} />
+          <Stat label="IP" value={instance.ipAddress || "—"} />
+          <Stat label="Domain" value={instance.domain || "—"} />
+          <Stat
+            label="TLS"
+            value={instance.domain ? instance.tlsStatus ?? "pending" : "—"}
+          />
+        </div>
+      </Card>
 
-        <Card title="Recent Logs">
-          {logs.length === 0 ? (
-            <p className="text-xs text-[var(--text-secondary)]">No logs yet.</p>
-          ) : (
-            <div className="space-y-1.5 font-mono text-xs">
-              {logs.map((l) => (
-                <p key={l.id}>
-                  <span
-                    className={
-                      l.level === "error"
-                        ? "text-red-400"
-                        : l.level === "warn"
-                        ? "text-amber-400"
-                        : "text-[var(--text-secondary)]"
-                    }
-                  >
-                    [{l.level}]
-                  </span>{" "}
-                  <span className="text-[var(--text-secondary)]/60">{l.createdAt.slice(0, 19)}</span>{" "}
-                  <span className="text-[var(--text-primary)]">{l.message}</span>
-                </p>
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
-
-      <div className="space-y-4">
-        <Card title="Credits">
-          <p className="text-3xl font-bold text-[var(--accent-color)] font-mono">12,480</p>
-          <p className="text-xs text-[var(--text-secondary)] mt-1">~3.2k requests remaining at current burn</p>
-          <Dummy />
-        </Card>
-        <Card title="Quick Info">
+      <Card title="Infrastructure">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Stat label="Region" value={instance.regionLabel} />
+          <Stat label="Server" value={instance.serverLabel} />
+          <Stat label="Specs" value={`${instance.vcpu} vCPU · ${instance.ramGb} GB`} />
           <Stat label="Created" value={new Date(instance.createdAt).toLocaleDateString()} />
-          <div className="mt-3">
-            <Stat label="Gateway" value={instance.gatewayUrl.replace("https://", "")} />
+        </div>
+      </Card>
+
+      <Card title="Recent Logs">
+        {logs.length === 0 ? (
+          <p className="text-xs text-[var(--text-secondary)]">No logs yet.</p>
+        ) : (
+          <div className="space-y-1.5 font-mono text-xs">
+            {logs.slice(0, 8).map((l) => (
+              <p key={l.id}>
+                <span
+                  className={
+                    l.level === "error"
+                      ? "text-red-400"
+                      : l.level === "warn"
+                      ? "text-amber-400"
+                      : "text-[var(--text-secondary)]"
+                  }
+                >
+                  [{l.level}]
+                </span>{" "}
+                <span className="text-[var(--text-secondary)]/60">{l.createdAt.slice(0, 19)}</span>{" "}
+                <span className="text-[var(--text-primary)]">{l.message}</span>
+              </p>
+            ))}
           </div>
-        </Card>
-      </div>
+        )}
+      </Card>
     </div>
   )
 }
@@ -486,17 +613,9 @@ function ControlsTab({ instance }: { instance: InstanceLite }) {
           </button>
           <button
             disabled={pending}
-            onClick={() => callAction(`/api/instances/${instance.id}/restart`, "POST", "Stop/Start")}
-            className="px-4 py-2 text-xs uppercase tracking-[0.08em] bg-[var(--card-bg)] text-[var(--text-primary)] border border-[var(--border-color)] hover:border-[var(--accent-color)] font-mono text-left disabled:opacity-50"
-          >
-            Restart (keep state)
-          </button>
-          <button
-            disabled={pending}
             onClick={() => {
               if (!confirm("Delete this instance? This cannot be undone.")) return
               callAction(`/api/instances/${instance.id}`, "DELETE", "Delete").then(() => {
-                // Redirect after delete.
                 router.push("/dashboard/instances")
               })
             }}
@@ -544,219 +663,41 @@ function ControlsTab({ instance }: { instance: InstanceLite }) {
   )
 }
 
-/* ───────────── AI CONFIG ───────────── */
-function AiConfigTab() {
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <Card title="Model">
-        <Stat label="Provider" value="Anthropic" />
-        <div className="mt-3">
-          <Stat label="Model" value="claude-opus-4-6" />
-        </div>
-        <div className="mt-3">
-          <Stat label="Tier" value="high" />
-        </div>
-        <div className="mt-3">
-          <Stat label="Fallback" value="openai/gpt-4.1" />
-        </div>
-        <Dummy />
-      </Card>
-      <Card title="Parameters">
-        <Stat label="Temperature" value="0.7" />
-        <div className="mt-3">
-          <Stat label="Max Tokens" value="4096" />
-        </div>
-        <div className="mt-3">
-          <Stat label="Rate Limit" value="60 req/min" />
-        </div>
-        <Dummy />
-      </Card>
-      <div className="md:col-span-2">
-        <Card title="SOUL.md">
-          <pre className="font-mono text-xs text-[var(--text-secondary)] whitespace-pre-wrap bg-[var(--code-bg)] border border-[var(--border-color)] p-4">
-{`# Identity: Support Agent
-# Role: Serve SaaS customers
-# Tone: friendly
-# Task Focus:
-  - Ticket triage & routing
-  - FAQ auto-response
-# Constraints: no external network, english-only`}
-          </pre>
-          <Dummy note="editor pending" />
-        </Card>
-      </div>
-    </div>
-  )
-}
-
 /* ───────────── INTERFACES ───────────── */
 function InterfacesTab({ instance }: { instance: InstanceLite }) {
-  const ifaces = [
-    { kind: "web", label: "Web Widget", status: "bound", hint: instance.gatewayUrl },
-    { kind: "telegram", label: "Telegram", status: "deferred", hint: "Not connected" },
-    { kind: "discord", label: "Discord", status: "not-configured", hint: "Not configured" },
-    { kind: "slack", label: "Slack", status: "not-configured", hint: "Not configured" },
-    { kind: "api", label: "REST API", status: "bound", hint: `${instance.gatewayUrl}/v1` },
-  ]
+  const webUrl = instance.domain
+    ? `${instance.tlsStatus === "issued" ? "https" : "http"}://${instance.domain}`
+    : instance.ipAddress
+    ? `http://${instance.ipAddress}`
+    : null
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {ifaces.map((i) => (
-        <Card key={i.kind} title={i.label}>
-          <div className="flex items-center justify-between">
-            <span
-              className={`text-xs uppercase tracking-[0.08em] font-mono px-2 py-0.5 border ${
-                i.status === "bound"
-                  ? "border-[var(--accent-color)]/40 text-[var(--accent-color)] bg-[var(--accent-dim)]"
-                  : i.status === "deferred"
-                  ? "border-amber-500/40 text-amber-400 bg-amber-500/5"
-                  : "border-[var(--border-color)] text-[var(--text-secondary)]"
-              }`}
-            >
-              {i.status}
-            </span>
-            <button className="text-xs uppercase tracking-[0.08em] font-mono text-[var(--accent-color)] hover:underline">
-              {i.status === "bound" ? "Reconfigure" : "Connect"}
-            </button>
-          </div>
-          <p className="text-xs text-[var(--text-secondary)] mt-3 font-mono break-all">{i.hint}</p>
-        </Card>
-      ))}
-      <div className="md:col-span-2">
-        <Dummy note="interface binding API pending" />
-      </div>
-    </div>
-  )
-}
-
-/* ───────────── SKILLS ───────────── */
-function SkillsTab() {
-  const skills = [
-    { id: "faq_handler", name: "FAQ Handler", desc: "Match queries against a knowledge base.", installed: true, deps: [] },
-    { id: "ticket_router", name: "Ticket Router", desc: "Classify and route support tickets.", installed: true, deps: ["faq_handler"] },
-    { id: "lead_capture", name: "Lead Capture", desc: "Qualify leads and push to CRM.", installed: false, deps: [] },
-    { id: "code_generator", name: "Code Generator", desc: "Produce code snippets on demand.", installed: false, deps: [] },
-    { id: "log_analyzer", name: "Log Analyzer", desc: "Summarize error logs and flag anomalies.", installed: false, deps: [] },
-    { id: "web_search", name: "Web Search", desc: "Live web retrieval via SearXNG.", installed: false, deps: [] },
-  ]
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-[var(--text-secondary)]">Marketplace · browse and install skills</p>
-        <input
-          type="text"
-          placeholder="Search skills..."
-          className="bg-[var(--card-bg)] border border-[var(--border-color)] px-3 py-1.5 text-xs font-mono text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/50 focus:outline-none focus:border-[var(--accent-color)]"
-        />
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {skills.map((s) => (
-          <div key={s.id} className="border border-[var(--border-color)] bg-[var(--card-bg)] p-4 space-y-2">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-sm font-medium text-[var(--text-primary)]">{s.name}</p>
-                <p className="text-[10px] font-mono text-[var(--text-secondary)]">{s.id}</p>
-              </div>
-              {s.installed && (
-                <span className="text-[10px] uppercase tracking-[0.08em] font-mono text-[var(--accent-color)] border border-[var(--accent-color)]/40 px-1.5 py-0.5">
-                  installed
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-[var(--text-secondary)]">{s.desc}</p>
-            {s.deps.length > 0 && (
-              <p className="text-[10px] font-mono text-[var(--text-secondary)]">
-                requires: {s.deps.join(", ")}
-              </p>
-            )}
-            <button
-              className={`w-full text-xs uppercase tracking-[0.08em] font-mono px-3 py-1.5 border ${
-                s.installed
-                  ? "border-red-500/30 text-red-400 hover:bg-red-500/10"
-                  : "border-[var(--accent-color)] text-[var(--accent-color)] hover:bg-[var(--accent-dim)]"
-              }`}
-            >
-              {s.installed ? "Uninstall" : "Install"}
-            </button>
-          </div>
-        ))}
-      </div>
-      <Dummy note="skill registry DB pending" />
-    </div>
-  )
-}
-
-/* ───────────── MONITORING ───────────── */
-function MonitoringTab({ instance }: { instance: InstanceLite }) {
-  return (
-    <div className="space-y-4">
-      <Card title="Uptime Kuma">
-        <p className="text-sm text-[var(--text-secondary)]">
-          Health probes and uptime history will be served by our Uptime Kuma cluster, then exposed here via API.
-        </p>
-        <div className="mt-4 grid grid-cols-4 gap-4">
-          <Stat label="Status" value={instance.status === "running" ? "Up" : "Down"} />
-          <Stat label="Last Check" value="12s ago" />
-          <Stat label="Avg Latency" value="142 ms" />
-          <Stat label="Incidents 7d" value="0" />
+      <Card title="Web">
+        <div className="flex items-center justify-between">
+          <span className="text-xs uppercase tracking-[0.08em] font-mono px-2 py-0.5 border border-[var(--accent-color)]/40 text-[var(--accent-color)] bg-[var(--accent-dim)]">
+            {instance.status === "running" ? "bound" : instance.status}
+          </span>
         </div>
-        <Dummy note="Uptime Kuma API integration pending" />
-      </Card>
-
-      <Card title="24h Uptime">
-        <div className="h-24 flex items-end gap-0.5">
-          {Array.from({ length: 48 }).map((_, i) => {
-            const h = 60 + ((i * 37) % 40)
-            return (
-              <div
-                key={i}
-                className="flex-1 bg-[var(--accent-color)]/60"
-                style={{ height: `${h}%` }}
-              />
-            )
-          })}
-        </div>
-        <p className="text-[10px] font-mono text-[var(--text-secondary)] mt-2">
-          48 buckets · 30 min each · dummy visualization
+        <p className="text-xs text-[var(--text-secondary)] mt-3 font-mono break-all">
+          {webUrl ?? "—"}
         </p>
       </Card>
-
-      <Card title="Probes">
-        <table className="w-full text-xs font-mono">
-          <thead>
-            <tr className="text-[var(--text-secondary)] border-b border-[var(--border-color)]">
-              <th className="text-left py-2">Time</th>
-              <th className="text-left py-2">Result</th>
-              <th className="text-right py-2">Latency</th>
-            </tr>
-          </thead>
-          <tbody className="text-[var(--text-primary)]">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <tr key={i} className="border-b border-[var(--border-color)]/50">
-                <td className="py-1.5 text-[var(--text-secondary)]">—</td>
-                <td className="py-1.5 text-[var(--accent-color)]">200 OK</td>
-                <td className="py-1.5 text-right">{120 + i * 7} ms</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <Dummy />
+      <Card title="Telegram">
+        <p className="text-xs text-[var(--text-secondary)]">
+          Bind a Telegram bot token to route Telegram DMs to this agent.
+        </p>
+        <p className="text-[10px] font-mono text-[var(--text-secondary)]/70 mt-3">
+          Use <span className="text-[var(--text-primary)]">POST /api/instances/{instance.id.slice(0, 8)}…/interfaces/connect</span>
+        </p>
       </Card>
     </div>
   )
 }
 
 /* ───────────── LOGS ───────────── */
-function LogsTab() {
+function LogsTab({ logs }: { logs: LogLite[] }) {
   const [level, setLevel] = useState<"all" | "info" | "warn" | "error">("all")
-  const lines = [
-    { t: "12:04:21", lvl: "info", msg: "GET /v1/chat 200 · 142ms" },
-    { t: "12:04:12", lvl: "info", msg: "Session started · user=u_a1b2" },
-    { t: "12:03:55", lvl: "warn", msg: "Rate limit approaching: 54/60" },
-    { t: "12:03:41", lvl: "info", msg: "Skill faq_handler matched" },
-    { t: "12:03:20", lvl: "error", msg: "Upstream 502 from provider · retrying" },
-    { t: "12:03:02", lvl: "info", msg: "Heartbeat OK" },
-    { t: "12:02:47", lvl: "info", msg: "POST /v1/complete 200 · 890ms" },
-  ].filter((l) => level === "all" || l.lvl === level)
+  const filtered = logs.filter((l) => level === "all" || l.level === level)
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
@@ -773,136 +714,30 @@ function LogsTab() {
             {l}
           </button>
         ))}
-        <div className="ml-auto flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-[var(--accent-color)] animate-pulse" />
-          <span className="text-[10px] font-mono text-[var(--text-secondary)]">streaming · dummy</span>
-        </div>
       </div>
       <div className="border border-[var(--border-color)] bg-black/60 p-4 font-mono text-xs space-y-1 max-h-[28rem] overflow-y-auto">
-        {lines.map((l, i) => (
-          <p key={i}>
-            <span className="text-[var(--text-secondary)]/60">{l.t}</span>{" "}
-            <span
-              className={
-                l.lvl === "error"
-                  ? "text-red-400"
-                  : l.lvl === "warn"
-                  ? "text-amber-400"
-                  : "text-[var(--accent-color)]"
-              }
-            >
-              [{l.lvl}]
-            </span>{" "}
-            <span className="text-[var(--text-primary)]">{l.msg}</span>
-          </p>
-        ))}
-      </div>
-      <Dummy note="log streaming WS pending" />
-    </div>
-  )
-}
-
-/* ───────────── WEBHOOKS ───────────── */
-function WebhooksTab() {
-  const [hooks, setHooks] = useState([
-    { id: "wh_1", url: "https://api.acme.com/bot-events", events: ["message.created", "incident.opened"], active: true },
-    { id: "wh_2", url: "https://hooks.slack.com/services/T0/B0/xxx", events: ["incident.opened"], active: false },
-  ])
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-[var(--text-secondary)]">Receive events over HTTPS. Signed with your bot token.</p>
-        <button className="btn-primary text-xs px-4 py-2">+ Add Webhook</button>
-      </div>
-      <div className="border border-[var(--border-color)]">
-        {hooks.map((h, i) => (
-          <div
-            key={h.id}
-            className={`p-4 flex items-center justify-between gap-4 ${i > 0 ? "border-t border-[var(--border-color)]" : ""}`}
-          >
-            <div className="min-w-0 flex-1">
-              <p className="font-mono text-xs text-[var(--text-primary)] truncate">{h.url}</p>
-              <p className="text-[10px] font-mono text-[var(--text-secondary)] mt-1">
-                events: {h.events.join(", ")}
-              </p>
-            </div>
-            <span
-              className={`text-[10px] uppercase tracking-[0.08em] font-mono px-2 py-0.5 border ${
-                h.active
-                  ? "border-[var(--accent-color)]/40 text-[var(--accent-color)] bg-[var(--accent-dim)]"
-                  : "border-[var(--border-color)] text-[var(--text-secondary)]"
-              }`}
-            >
-              {h.active ? "active" : "paused"}
-            </span>
-            <button
-              onClick={() => setHooks(hooks.map((x) => (x.id === h.id ? { ...x, active: !x.active } : x)))}
-              className="text-xs uppercase tracking-[0.08em] font-mono text-[var(--accent-color)] hover:underline"
-            >
-              {h.active ? "Pause" : "Resume"}
-            </button>
-            <button
-              onClick={() => setHooks(hooks.filter((x) => x.id !== h.id))}
-              className="text-xs uppercase tracking-[0.08em] font-mono text-red-400 hover:underline"
-            >
-              Delete
-            </button>
-          </div>
-        ))}
-        {hooks.length === 0 && (
-          <p className="text-sm text-[var(--text-secondary)] p-6 text-center">No webhooks yet.</p>
+        {filtered.length === 0 ? (
+          <p className="text-[var(--text-secondary)]">No log entries.</p>
+        ) : (
+          filtered.map((l) => (
+            <p key={l.id}>
+              <span className="text-[var(--text-secondary)]/60">{l.createdAt.slice(0, 19)}</span>{" "}
+              <span
+                className={
+                  l.level === "error"
+                    ? "text-red-400"
+                    : l.level === "warn"
+                    ? "text-amber-400"
+                    : "text-[var(--accent-color)]"
+                }
+              >
+                [{l.level}]
+              </span>{" "}
+              <span className="text-[var(--text-primary)]">{l.message}</span>
+            </p>
+          ))
         )}
       </div>
-      <Dummy note="webhook delivery worker pending" />
-    </div>
-  )
-}
-
-/* ───────────── ENV VARS ───────────── */
-function EnvTab() {
-  const [vars, setVars] = useState([
-    { key: "OPENAI_API_KEY", value: "sk-•••••••••••••xyz", secret: true },
-    { key: "SLACK_WEBHOOK_URL", value: "https://hooks.slack.com/•••", secret: true },
-    { key: "LOG_LEVEL", value: "info", secret: false },
-  ])
-  const [showKey, setShowKey] = useState<string | null>(null)
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-[var(--text-secondary)]">Injected into the bot runtime at startup.</p>
-        <button className="btn-primary text-xs px-4 py-2">+ Add Variable</button>
-      </div>
-      <div className="border border-[var(--border-color)]">
-        {vars.map((v, i) => (
-          <div
-            key={v.key}
-            className={`p-3 flex items-center gap-3 ${i > 0 ? "border-t border-[var(--border-color)]" : ""}`}
-          >
-            <p className="font-mono text-xs text-[var(--accent-color)] min-w-[14rem]">{v.key}</p>
-            <p className="font-mono text-xs text-[var(--text-primary)] flex-1 truncate">
-              {v.secret && showKey !== v.key ? "••••••••••••" : v.value}
-            </p>
-            {v.secret && (
-              <button
-                onClick={() => setShowKey(showKey === v.key ? null : v.key)}
-                className="text-[10px] uppercase tracking-[0.08em] font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-              >
-                {showKey === v.key ? "Hide" : "Reveal"}
-              </button>
-            )}
-            <button
-              onClick={() => setVars(vars.filter((x) => x.key !== v.key))}
-              className="text-[10px] uppercase tracking-[0.08em] font-mono text-red-400 hover:underline"
-            >
-              Delete
-            </button>
-          </div>
-        ))}
-      </div>
-      <p className="text-[10px] font-mono text-[var(--text-secondary)]">
-        Changes apply on next restart.
-      </p>
-      <Dummy note="encrypted env store pending" />
     </div>
   )
 }
@@ -936,21 +771,12 @@ function DangerTab({ instance }: { instance: InstanceLite }) {
 
   return (
     <div className="space-y-4">
-      <Card title="Transfer Ownership">
-        <p className="text-sm text-[var(--text-secondary)] mb-3">
-          Move this agent to another user in your org. They take billing responsibility.
-        </p>
-        <button className="px-4 py-2 text-xs uppercase tracking-[0.08em] font-mono border border-[var(--border-color)] text-[var(--text-primary)] hover:border-[var(--accent-color)]">
-          Transfer
-        </button>
-        <Dummy />
-      </Card>
       <div className="border border-red-500/30 bg-red-500/5 p-5">
         <p className="text-[10px] uppercase tracking-[0.1em] font-mono text-red-400 mb-3">
           Delete Instance
         </p>
         <p className="text-sm text-[var(--text-secondary)] mb-3">
-          Permanently deletes this bot, its config, logs, and all associated data. This cannot be undone.
+          Permanently deletes this bot, its config, logs, and all associated data. Also destroys the Linode VPS. This cannot be undone.
         </p>
         {!open ? (
           <button
@@ -994,48 +820,6 @@ function DangerTab({ instance }: { instance: InstanceLite }) {
           </div>
         )}
       </div>
-    </div>
-  )
-}
-
-/* ───────────── USAGE ───────────── */
-function UsageTab() {
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card title="Credits Remaining">
-          <p className="text-3xl font-bold text-[var(--accent-color)] font-mono">12,480</p>
-        </Card>
-        <Card title="Used This Period">
-          <p className="text-3xl font-bold text-[var(--text-primary)] font-mono">7,520</p>
-        </Card>
-        <Card title="Plan Limit">
-          <p className="text-3xl font-bold text-[var(--text-primary)] font-mono">20,000</p>
-        </Card>
-      </div>
-      <Card title="Recent Requests">
-        <table className="w-full text-xs font-mono">
-          <thead>
-            <tr className="text-[var(--text-secondary)] border-b border-[var(--border-color)]">
-              <th className="text-left py-2">Time</th>
-              <th className="text-left py-2">Kind</th>
-              <th className="text-right py-2">Tokens</th>
-              <th className="text-right py-2">Credits</th>
-            </tr>
-          </thead>
-          <tbody className="text-[var(--text-primary)]">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <tr key={i} className="border-b border-[var(--border-color)]/50">
-                <td className="py-1.5 text-[var(--text-secondary)]">—</td>
-                <td className="py-1.5">request</td>
-                <td className="py-1.5 text-right">{800 + i * 40}</td>
-                <td className="py-1.5 text-right text-[var(--accent-color)]">{i + 1}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <Dummy />
-      </Card>
     </div>
   )
 }

@@ -11,3 +11,8 @@ node_modules/
 
 *.db
 *.db-journal
+
+
+graphify-out
+
+.opencode

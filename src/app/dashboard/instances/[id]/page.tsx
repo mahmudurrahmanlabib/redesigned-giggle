@@ -6,11 +6,32 @@ import { Badge } from "@/components/ui/badge"
 import { InstanceTabs } from "./instance-tabs"
 
 const STATUS_STYLES: Record<string, string> = {
+  pending: "bg-amber-500/10 text-amber-400 border-amber-500/30",
   running: "bg-[var(--accent-dim)] text-[var(--accent-color)] border-[var(--accent-color)]/30",
   provisioning: "bg-amber-500/10 text-amber-400 border-amber-500/30",
   stopped: "bg-[var(--card-bg)] text-[var(--text-secondary)] border-[var(--border-color)]",
-  failed: "bg-red-500/10 text-red-400 border-red-500/30",
+  failed_provisioning: "bg-red-500/10 text-red-400 border-red-500/30",
+  deleting: "bg-zinc-800/20 text-zinc-400 border-zinc-800/30",
   deleted: "bg-[var(--card-bg)] text-[var(--text-secondary)]/50 border-[var(--border-color)]",
+}
+
+/**
+ * Build the real access URL for an instance. Reflects what Caddy is actually
+ * serving: HTTPS iff a domain exists and TLS is issued, otherwise HTTP on the
+ * VM IP (Caddy listens on :80 without ACME when no domain is configured).
+ * Returns null during provisioning or when no VM exists yet.
+ */
+function buildAccessUrl(i: {
+  ipAddress: string | null
+  domain: string | null
+  tlsStatus: string | null
+}): { url: string; scheme: "https" | "http" } | null {
+  if (i.domain) {
+    const scheme = i.tlsStatus === "issued" ? "https" : "http"
+    return { url: `${scheme}://${i.domain}`, scheme }
+  }
+  if (i.ipAddress) return { url: `http://${i.ipAddress}`, scheme: "http" }
+  return null
 }
 
 export default async function InstanceDetailPage({
@@ -40,11 +61,11 @@ export default async function InstanceDetailPage({
 
   if (!instance) notFound()
 
-  const gatewayBase = process.env.NEXT_PUBLIC_GATEWAY_DOMAIN || "gateway.sovereignml.ai"
-  const gatewayUrl = `https://${gatewayBase}/${instance.id.slice(0, 8)}`
-  const accessUrl = instance.ipAddress
-    ? `https://${instance.ipAddress}`
-    : gatewayUrl
+  const access = buildAccessUrl({
+    ipAddress: instance.ipAddress,
+    domain: instance.domain,
+    tlsStatus: instance.tlsStatus,
+  })
 
   return (
     <div className="space-y-6 max-w-6xl">
@@ -68,41 +89,46 @@ export default async function InstanceDetailPage({
             </Badge>
           </div>
           <p className="text-xs text-[var(--text-secondary)] mt-1 font-mono">
-            {instance.slug} · id:{instance.id}
+            {instance.slug}
           </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="border border-[var(--accent-color)]/30 bg-[var(--accent-dim)]/20 p-4">
-          <p className="text-[10px] text-[var(--accent-color)] uppercase tracking-[0.1em] font-mono mb-2">
-            Gateway URL
+      <div className="border border-[var(--border-color)] bg-[var(--card-bg)] p-4">
+        <p className="text-[10px] text-[var(--text-secondary)] uppercase tracking-[0.1em] font-mono mb-2">
+          Access
+        </p>
+        {access ? (
+          <>
+            <a
+              href={access.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-mono text-sm text-[var(--text-primary)] hover:text-[var(--accent-color)] break-all"
+            >
+              {access.url}
+            </a>
+            {access.scheme === "http" && instance.domain && (
+              <p className="text-xs text-amber-400 mt-2 font-mono">
+                TLS certificate pending — accessed over HTTP until Let&apos;s Encrypt completes.
+              </p>
+            )}
+            {access.scheme === "http" && !instance.domain && (
+              <p className="text-xs text-[var(--text-secondary)] mt-2">
+                Raw IP access over HTTP. Configure a domain to enable HTTPS.
+              </p>
+            )}
+            {access.scheme === "https" && (
+              <p className="text-xs text-[var(--text-secondary)] mt-2">
+                Served with Let&apos;s Encrypt certificate.
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="font-mono text-sm text-[var(--text-secondary)]">
+            Provisioning… no public access yet.
           </p>
-          <a
-            href={gatewayUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-mono text-sm text-[var(--text-primary)] hover:text-[var(--accent-color)] break-all"
-          >
-            {gatewayUrl}
-          </a>
-          <p className="text-xs text-[var(--text-secondary)] mt-2">
-            Public endpoint. Routes to this bot through the managed gateway.
-          </p>
-        </div>
-        <div className="border border-[var(--border-color)] bg-[var(--card-bg)] p-4">
-          <p className="text-[10px] text-[var(--text-secondary)] uppercase tracking-[0.1em] font-mono mb-2">
-            Instance Access
-          </p>
-          <p className="font-mono text-sm text-[var(--text-primary)] break-all">
-            {accessUrl}
-          </p>
-          <p className="text-xs text-[var(--text-secondary)] mt-2">
-            {instance.ipAddress
-              ? `Direct VPS access at ${instance.ipAddress}`
-              : "Serverless — no direct VPS access. Use gateway URL."}
-          </p>
-        </div>
+        )}
       </div>
 
       <InstanceTabs
@@ -117,7 +143,6 @@ export default async function InstanceDetailPage({
           vcpu: instance.serverConfig.vcpu,
           ramGb: instance.serverConfig.ramGb,
           createdAt: instance.createdAt.toISOString(),
-          gatewayUrl,
           domain: instance.domain,
           dnsStatus: instance.dnsStatus,
           tlsStatus: instance.tlsStatus,

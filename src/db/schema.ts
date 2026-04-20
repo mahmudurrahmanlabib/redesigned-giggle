@@ -244,10 +244,20 @@ export const instances = pgTable(
     sshKeyId: text().references(() => sshKeys.id),
     storageGb: integer().notNull(),
     billingInterval: text().default("month").notNull(),
-    status: text().default("provisioning").notNull(),
+    // State machine — see src/lib/instance-state.ts for the transition table.
+    // Legal values: pending | provisioning | running | stopped |
+    //               failed_provisioning | deleting | deleted
+    status: text().default("pending").notNull(),
     ipAddress: text(),
     rootPasswordEnc: text(),
     stripeSubscriptionId: text(),
+
+    // State machine bookkeeping
+    lastTransitionAt: timestamp({ mode: "date", withTimezone: false }),
+    provisionAttempts: integer().default(0).notNull(),
+    deletionAttempts: integer().default(0).notNull(),
+    lastError: text(),
+    reconciledAt: timestamp({ mode: "date", withTimezone: false }),
 
     // Bot Factory fields
     agentType: text(),
@@ -266,10 +276,11 @@ export const instances = pgTable(
     containerPort: integer(),
     linodeId: integer(),
 
-    // OpenClaw agent deploy
+    // OpenClaw agent deploy — dns/tls are only populated when a domain is
+    // configured. NULL = "not applicable", never synthesize a fake value.
     domain: text(),
-    dnsStatus: text().default("pending").notNull(),
-    tlsStatus: text().default("pending").notNull(),
+    dnsStatus: text(),
+    tlsStatus: text(),
     openclawAdminEmail: text(),
     openclawAdminPasswordEnc: text(),
 
@@ -361,9 +372,55 @@ export const instanceLogs = pgTable(
       .references(() => instances.id, { onDelete: "cascade" }),
     level: text().default("info").notNull(),
     message: text().notNull(),
+    // Structured log fields — provisioner/reconciler/delete paths set these.
+    // All optional so older log rows remain valid.
+    stage: text(),
+    action: text(),
+    result: text(),
+    durationMs: integer(),
+    detail: jsonb(),
     createdAt: now(),
   },
   (t) => [index("InstanceLog_instanceId_idx").on(t.instanceId)],
+)
+
+// OrphanEvent — one row per reconciler decision: "VM exists in Linode but no
+// DB row owns it" or "DB says deleting but Linode still has it".
+export const orphanEvents = pgTable(
+  "OrphanEvent",
+  {
+    id: cuid().primaryKey(),
+    linodeId: integer().notNull(),
+    instanceId: text().references(() => instances.id, { onDelete: "set null" }),
+    action: text().notNull(), // detected | delete_attempted | deleted | failed
+    detectedAt: now(),
+    resolvedAt: timestamp({ mode: "date", withTimezone: false }),
+    detail: text(),
+  },
+  (t) => [
+    index("OrphanEvent_linodeId_idx").on(t.linodeId),
+    index("OrphanEvent_action_idx").on(t.action),
+  ],
+)
+
+// DomainVerification — user claims a domain by publishing a TXT record with
+// a nonce BEFORE we provision a VM. Deploy route checks this table.
+export const domainVerifications = pgTable(
+  "DomainVerification",
+  {
+    id: cuid().primaryKey(),
+    userId: text()
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    domain: text().notNull(),
+    nonce: text().notNull(),
+    verifiedAt: timestamp({ mode: "date", withTimezone: false }),
+    createdAt: now(),
+  },
+  (t) => [
+    uniqueIndex("DomainVerification_userId_domain_key").on(t.userId, t.domain),
+    index("DomainVerification_domain_idx").on(t.domain),
+  ],
 )
 
 export const adminNotes = pgTable(

@@ -1,6 +1,7 @@
 // Deployment regions. Edit this list to add/remove locations across the app.
 // The seed script writes these into the Region table so FKs work,
 // but the wizard reads directly from this typed array.
+// linodeRegion must match actual Linode API region slugs.
 
 export type RegionConfig = {
   slug: string
@@ -15,18 +16,18 @@ export type RegionConfig = {
 export const REGIONS: readonly RegionConfig[] = [
   {
     slug: "us-east-1",
-    name: "Ashburn",
+    name: "Newark",
     country: "United States (East)",
-    flag: "🇺🇸",
+    flag: "\u{1F1FA}\u{1F1F8}",
     available: true,
     sortOrder: 10,
     linodeRegion: "us-east",
   },
   {
     slug: "us-west-1",
-    name: "Hillsboro",
+    name: "Fremont",
     country: "United States (West)",
-    flag: "🇺🇸",
+    flag: "\u{1F1FA}\u{1F1F8}",
     available: true,
     sortOrder: 20,
     linodeRegion: "us-west",
@@ -35,25 +36,25 @@ export const REGIONS: readonly RegionConfig[] = [
     slug: "eu-central-1",
     name: "Frankfurt",
     country: "Germany",
-    flag: "🇩🇪",
+    flag: "\u{1F1E9}\u{1F1EA}",
     available: true,
     sortOrder: 30,
     linodeRegion: "eu-central",
   },
   {
     slug: "eu-west-1",
-    name: "Helsinki",
-    country: "Finland",
-    flag: "🇫🇮",
+    name: "London",
+    country: "United Kingdom",
+    flag: "\u{1F1EC}\u{1F1E7}",
     available: true,
     sortOrder: 40,
-    linodeRegion: "eu-central",
+    linodeRegion: "eu-west",
   },
   {
-    slug: "ap-southeast-1",
+    slug: "ap-south-1",
     name: "Singapore",
     country: "Singapore",
-    flag: "🇸🇬",
+    flag: "\u{1F1F8}\u{1F1EC}",
     available: true,
     sortOrder: 50,
     linodeRegion: "ap-south",
@@ -62,7 +63,7 @@ export const REGIONS: readonly RegionConfig[] = [
     slug: "ap-northeast-1",
     name: "Tokyo",
     country: "Japan",
-    flag: "🇯🇵",
+    flag: "\u{1F1EF}\u{1F1F5}",
     available: false,
     sortOrder: 60,
     linodeRegion: "ap-northeast",

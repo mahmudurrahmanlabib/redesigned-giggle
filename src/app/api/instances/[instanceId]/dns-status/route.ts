@@ -27,18 +27,20 @@ export async function GET(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
 
+  // No domain configured = no DNS/TLS state. Do NOT synthesize "ready"/"issued"
+  // here — those columns stay NULL until the user opts in with a real domain.
   if (!instance.domain) {
     return NextResponse.json({
       domain: null,
-      dnsStatus: "ready" as DnsStatus,
-      tlsStatus: "issued" as TlsStatus,
+      dnsStatus: null,
+      tlsStatus: null,
       resolvedIps: [],
       expectedIp: instance.ipAddress,
     })
   }
 
   let resolvedIps: string[] = []
-  let dnsStatus: DnsStatus = instance.dnsStatus as DnsStatus
+  let dnsStatus: DnsStatus = (instance.dnsStatus as DnsStatus) ?? "pending"
   try {
     resolvedIps = await dns.promises.resolve4(instance.domain)
     if (instance.ipAddress && resolvedIps.includes(instance.ipAddress)) {
@@ -51,7 +53,7 @@ export async function GET(
     dnsStatus = "pending"
   }
 
-  let tlsStatus: TlsStatus = instance.tlsStatus as TlsStatus
+  let tlsStatus: TlsStatus = (instance.tlsStatus as TlsStatus) ?? "pending"
   if (dnsStatus === "ready") {
     try {
       const probe = await fetch(`https://${instance.domain}/`, {

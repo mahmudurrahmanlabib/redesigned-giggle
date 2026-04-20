@@ -13,6 +13,7 @@ import {
 } from "@/db"
 import { provisionBot } from "@/lib/provisioner"
 import { grantCredits } from "@/lib/credits"
+import { describeLinodeError } from "@/lib/linode"
 
 // ---------- checkout.session.completed ----------
 // Triggered when the user finishes paying. Flips Instance to "running",
@@ -74,16 +75,10 @@ export async function handleCheckoutSessionCompleted(
       await provisionBot(fresh)
     }
   } catch (err) {
-    console.error(`[stripe] provisionBot failed for ${instanceId}:`, err)
-    await db
-      .update(instances)
-      .set({ status: "failed" })
-      .where(eq(instances.id, instanceId))
-    await db.insert(instanceLogs).values({
-      instanceId,
-      level: "error",
-      message: `Provisioning failed after payment: ${err instanceof Error ? err.message : String(err)}`,
-    })
+    // provisionBot handles its own rollback + state transition. Just log.
+    console.error(
+      `[stripe] provisionBot failed for ${instanceId}: ${describeLinodeError(err)}`,
+    )
   }
 
   // Create the Subscription row, linked 1:1 to the instance.
@@ -151,15 +146,22 @@ export async function handleSubscriptionDeleted(
     .set({ status: "canceled" })
     .where(eq(subscriptions.id, local.id))
   if (local.instance) {
-    await db
-      .update(instances)
-      .set({ status: "stopped" })
-      .where(eq(instances.id, local.instance.id))
-    await db.insert(instanceLogs).values({
-      instanceId: local.instance.id,
-      level: "warn",
-      message: "Subscription canceled. Instance stopped.",
-    })
+    // Only transition if the instance is currently running — respect the
+    // state machine. A "deleting" / "deleted" / "failed_provisioning" row
+    // should not be flipped back to stopped.
+    if (local.instance.status === "running") {
+      const { transitionInstance, logInstanceEvent } = await import(
+        "@/lib/instance-state"
+      )
+      await transitionInstance(local.instance.id, ["running"], "stopped")
+      await logInstanceEvent({
+        instanceId: local.instance.id,
+        level: "warn",
+        stage: "subscription",
+        action: "canceled",
+        message: "Subscription canceled. Instance stopped.",
+      })
+    }
   }
 }
 

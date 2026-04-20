@@ -1,5 +1,5 @@
 import { auth } from "@/auth"
-import { db, eq, desc, instances } from "@/db"
+import { db, eq, and, desc, instances, sql } from "@/db"
 import { redirect } from "next/navigation"
 import Link from "next/link"
 import { InstancesFilter } from "./instances-filter"
@@ -8,8 +8,12 @@ export default async function InstancesPage() {
   const session = await auth()
   if (!session?.user?.id) redirect("/login")
 
+  // Hide deleted rows from the user panel. They remain visible in admin.
   const rows = await db.query.instances.findMany({
-    where: eq(instances.userId, session.user.id),
+    where: and(
+      eq(instances.userId, session.user.id),
+      sql`${instances.status} != 'deleted'`,
+    ),
     with: {
       region: true,
       serverConfig: true,

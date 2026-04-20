@@ -109,7 +109,7 @@ Violation of these terms may result in immediate account suspension or terminati
       },
       {
         title: "Mock Infrastructure",
-        content: "In the current version of the Platform, agent deployment creates database records and assigns mock IP addresses. Real provisioner integration (e.g., Hetzner Cloud) is in development. You acknowledge this limitation.",
+        content: "In the current version of the Platform, agent deployment provisions infrastructure on Akamai/Linode cloud. You acknowledge that service availability depends on upstream provider status.",
       },
     ],
   },

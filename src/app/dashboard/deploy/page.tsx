@@ -61,9 +61,9 @@ const BUDGETS: { value: BudgetTier; label: string; hint: string }[] = [
   { value: "high", label: "High", hint: "Best available · Claude Opus / GPT-4.1" },
 ]
 
-type Step = "purpose" | "interface" | "capability" | "project" | "region" | "billing" | "server" | "advanced" | "domain" | "review"
-const ALL_STEPS: Step[] = ["purpose", "interface", "capability", "project", "region", "billing", "server", "advanced", "domain", "review"]
-const SERVERLESS_SKIP: Step[] = ["region", "server", "advanced", "domain"]
+type Step = "project" | "purpose" | "capability" | "interface" | "region" | "server" | "advanced" | "billing"
+const ALL_STEPS: Step[] = ["project", "purpose", "capability", "interface", "region", "server", "advanced", "billing"]
+const SERVERLESS_SKIP: Step[] = ["region", "server", "advanced"]
 function stepsFor(target: DeploymentTarget): Step[] {
   return target === "vps" ? ALL_STEPS : ALL_STEPS.filter((s) => !SERVERLESS_SKIP.includes(s))
 }
@@ -77,23 +77,21 @@ function deploymentSlug(raw: string) {
 }
 
 const STEP_LABELS: Record<Step, string> = {
-  purpose: "Purpose",
-  interface: "Interface",
-  capability: "Capability",
   project: "Project",
+  purpose: "Purpose",
+  capability: "Capability",
+  interface: "Interface",
   region: "Location",
-  billing: "Billing",
   server: "Server",
   advanced: "Advanced",
-  domain: "Domain",
-  review: "Review & Deploy",
+  billing: "Billing",
 }
 
 const DOMAIN_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/
 
 export default function DeployPage() {
   const router = useRouter()
-  const [step, setStep] = useState<Step>("purpose")
+  const [step, setStep] = useState<Step>("project")
   const [deploying, setDeploying] = useState(false)
 
   // Agent intake
@@ -113,7 +111,7 @@ export default function DeployPage() {
   const [projectName, setProjectName] = useState("")
   const [selectedRegion, setSelectedRegion] = useState<RegionConfig | null>(null)
   const [billingInterval, setBillingInterval] = useState<BillingInterval>("month")
-  const [selectedCategory, setSelectedCategory] = useState<ServerCategory>("CX")
+  const [selectedCategory, setSelectedCategory] = useState<ServerCategory>("Shared")
   const [selectedServer, setSelectedServer] = useState<ServerTypeConfig | null>(null)
   const [rootPassword, setRootPassword] = useState("")
   const [sshKey, setSshKey] = useState("")
@@ -123,7 +121,7 @@ export default function DeployPage() {
   const STEPS = stepsFor(deploymentTarget)
   // Keep current step valid when toggling between VPS and serverless
   useEffect(() => {
-    if (!STEPS.includes(step)) setStep("billing")
+    if (!STEPS.includes(step)) setStep(STEPS[0])
   }, [STEPS, step])
   const stepIdx = STEPS.indexOf(step)
   const selectedCategoryObj = AGENT_CATEGORIES.find((c) => c.slug === useCase)
@@ -133,25 +131,21 @@ export default function DeployPage() {
     !/^\d{6,12}:[A-Za-z0-9_-]{30,}$/.test(telegramToken.trim())
   const canNext = (() => {
     switch (step) {
-      case "purpose":
-        return !!useCase && targetUser.trim().length >= 2 && !!tone
-      case "interface":
-        return !!interfaceKind && !!deploymentTarget && !telegramImmediateInvalid
-      case "capability":
-        return coreActions.length > 0
       case "project":
         return projectName.trim().length >= 2
+      case "purpose":
+        return !!useCase && targetUser.trim().length >= 2 && !!tone
+      case "capability":
+        return coreActions.length > 0
+      case "interface":
+        return !!interfaceKind && !!deploymentTarget && !telegramImmediateInvalid
       case "region":
         return !!selectedRegion
-      case "billing":
-        return true
       case "server":
         return !!selectedServer
       case "advanced":
-        return true
-      case "domain":
         return domain.trim() === "" || DOMAIN_RE.test(domain.trim().toLowerCase())
-      case "review":
+      case "billing":
         return true
     }
   })()
@@ -215,7 +209,7 @@ export default function DeployPage() {
         window.location.href = data.checkoutUrl
       } else {
         toast.success("Instance created! Redirecting...")
-        router.push("/dashboard/instances")
+        router.push(`/dashboard/instances/${data.instanceId}`)
       }
     } catch {
       toast.error("Something went wrong")
@@ -646,12 +640,14 @@ export default function DeployPage() {
           </div>
         )}
 
-        {/* STEP: Billing */}
+        {/* STEP: Billing (includes Review summary + Deploy) */}
         {step === "billing" && (
           <div className="space-y-6">
             <div>
-              <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">Billing Cycle</h2>
-              <p className="text-sm text-[var(--text-secondary)]">Choose monthly flexibility or save ~17% with yearly billing.</p>
+              <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">Billing & Review</h2>
+              <p className="text-sm text-[var(--text-secondary)]">
+                Choose a billing cycle, confirm your configuration, and deploy.
+              </p>
             </div>
             <div className="grid grid-cols-2 gap-4">
               {(["month", "year"] as BillingInterval[]).map((interval) => (
@@ -677,6 +673,103 @@ export default function DeployPage() {
                   )}
                 </button>
               ))}
+            </div>
+
+            <div className="space-y-4">
+              <div className="bg-[var(--card-bg)] rounded-xl p-4 border border-[var(--accent-color)]/30">
+                <p className="text-[var(--accent-color)] text-xs uppercase tracking-wide mb-2 font-mono">Agent</p>
+                <p className="text-[var(--text-primary)] font-medium">{selectedCategoryObj?.name ?? "—"}</p>
+                <p className="text-[var(--text-secondary)] text-xs mt-1">
+                  For: {targetUser || "—"} ·
+                  <span className="ml-1">Tone: <span className="text-[var(--text-primary)] capitalize">{tone}</span></span> ·
+                  <span className="ml-1">Interface: <span className="text-[var(--text-primary)] capitalize">{interfaceKind}</span></span> ·
+                  <span className="ml-1">Deploy: <span className="text-[var(--text-primary)] capitalize">{deploymentTarget}</span></span> ·
+                  <span className="ml-1">Model: <span className="text-[var(--text-primary)] uppercase">{budgetTier}</span></span>
+                </p>
+                {coreActions.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {coreActions.map((a) => (
+                      <span key={a} className="text-[10px] border border-[var(--border-color)] px-2 py-0.5 text-[var(--text-secondary)]">{a}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="bg-[var(--card-bg)] rounded-xl p-4">
+                  <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">Project</p>
+                  <p className="text-[var(--text-primary)] font-medium">{projectName}</p>
+                  <p className="text-[var(--text-secondary)] text-xs mt-2 font-mono">
+                    slug: {slugPreview || "—"}
+                  </p>
+                </div>
+                {deploymentTarget === "vps" ? (
+                  <>
+                    <div className="bg-[var(--card-bg)] rounded-xl p-4">
+                      <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">Region</p>
+                      <p className="text-[var(--text-primary)] font-medium">{selectedRegion?.flag} {selectedRegion?.name}</p>
+                    </div>
+                    <div className="bg-[var(--card-bg)] rounded-xl p-4">
+                      <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">Server</p>
+                      <p className="text-[var(--text-primary)] font-medium">{selectedServer?.label} ({selectedServer?.vcpu} vCPU, {selectedServer?.ramGb} GB RAM)</p>
+                    </div>
+                  </>
+                ) : (
+                  <div className="bg-[var(--card-bg)] rounded-xl p-4 col-span-2">
+                    <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">Runtime</p>
+                    <p className="text-[var(--text-primary)] font-medium capitalize">{deploymentTarget} — managed pool</p>
+                    <p className="text-[var(--text-secondary)] text-xs mt-1">No region or server required. Billed per request from credits.</p>
+                  </div>
+                )}
+                <div className="bg-[var(--card-bg)] rounded-xl p-4">
+                  <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">Billing</p>
+                  <p className="text-[var(--text-primary)] font-medium">{billingInterval === "year" ? "Yearly" : "Monthly"}</p>
+                </div>
+                {extraStorageGb > 0 && (
+                  <div className="bg-[var(--card-bg)] rounded-xl p-4">
+                    <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">Extra Storage</p>
+                    <p className="text-[var(--text-primary)] font-medium">{extraStorageGb} GB</p>
+                  </div>
+                )}
+                {domain.trim() && (
+                  <div className="bg-[var(--card-bg)] rounded-xl p-4">
+                    <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">Domain</p>
+                    <p className="text-[var(--text-primary)] font-medium font-mono text-xs truncate">{domain.trim()}</p>
+                  </div>
+                )}
+                {sshKey && (
+                  <div className="bg-[var(--card-bg)] rounded-xl p-4">
+                    <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">SSH Key</p>
+                    <p className="text-[var(--text-primary)] font-medium font-mono text-xs truncate">{sshKey.slice(0, 40)}...</p>
+                  </div>
+                )}
+              </div>
+
+              {price && (
+                <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-6 space-y-3">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-[var(--text-secondary)]">Server ({selectedServer?.label})</span>
+                    <span className="text-[var(--text-primary)]">{formatUsd(price.serverPrice)}</span>
+                  </div>
+                  {price.storagePrice > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-[var(--text-secondary)]">Extra Storage ({extraStorageGb} GB)</span>
+                      <span className="text-[var(--text-primary)]">{formatUsd(price.storagePrice)}</span>
+                    </div>
+                  )}
+                  <div className="border-t border-[var(--border-color)] pt-3 flex justify-between">
+                    <span className="text-[var(--text-primary)] font-semibold">Total</span>
+                    <span className="text-[var(--text-primary)] font-bold text-xl">
+                      {formatUsd(price.total)}
+                      <span className="text-[var(--text-secondary)] text-sm font-normal">
+                        /{billingInterval === "year" ? "year" : "month"}
+                      </span>
+                    </span>
+                  </div>
+                  {price.yearlyDiscountApplied && (
+                    <p className="text-emerald-400 text-xs">~17% savings with yearly billing</p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -742,12 +835,14 @@ export default function DeployPage() {
           </div>
         )}
 
-        {/* STEP: Advanced */}
+        {/* STEP: Advanced (includes Custom Domain) */}
         {step === "advanced" && (
           <div className="space-y-6">
             <div>
               <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">Advanced Options</h2>
-              <p className="text-sm text-[var(--text-secondary)]">Optional configuration. You can skip this step.</p>
+              <p className="text-sm text-[var(--text-secondary)]">
+                Optional configuration. All fields are independent — fill only what you need.
+              </p>
             </div>
 
             <div className="space-y-4">
@@ -796,134 +891,26 @@ export default function DeployPage() {
                   <span>{STORAGE_MAX_GB} GB</span>
                 </div>
               </div>
-            </div>
-          </div>
-        )}
 
-        {/* STEP: Domain */}
-        {step === "domain" && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">Custom Domain</h2>
-              <p className="text-sm text-[var(--text-secondary)]">
-                Optional. Enter a domain you own (e.g. <span className="font-mono">agent.example.com</span>). We&apos;ll serve your OpenClaw agent there with auto-issued SSL.
-                You&apos;ll add an <span className="font-mono">A</span> record pointing to the server IP after provisioning — we&apos;ll show the exact value.
-              </p>
-            </div>
-            <input
-              type="text"
-              value={domain}
-              onChange={(e) => setDomain(e.target.value)}
-              placeholder="agent.example.com"
-              className="w-full bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/50 focus:outline-none focus:border-[var(--accent-color)]/50 transition-colors font-mono"
-            />
-            {domain.trim() && !DOMAIN_RE.test(domain.trim().toLowerCase()) && (
-              <p className="text-xs text-amber-400 font-mono">Not a valid domain — expected like <span>agent.example.com</span></p>
-            )}
-            <p className="text-[11px] font-mono text-[var(--text-secondary)]">
-              Leave blank to expose on the server IP over HTTP. You can attach a domain later.
-            </p>
-          </div>
-        )}
-
-        {/* STEP: Review */}
-        {step === "review" && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">Review & Deploy</h2>
-              <p className="text-sm text-[var(--text-secondary)]">Confirm your configuration before deploying.</p>
-            </div>
-
-            <div className="space-y-4">
-              <div className="bg-[var(--card-bg)] rounded-xl p-4 border border-[var(--accent-color)]/30">
-                <p className="text-[var(--accent-color)] text-xs uppercase tracking-wide mb-2 font-mono">Agent</p>
-                <p className="text-[var(--text-primary)] font-medium">{selectedCategoryObj?.name ?? "—"}</p>
-                <p className="text-[var(--text-secondary)] text-xs mt-1">
-                  For: {targetUser || "—"} ·
-                  <span className="ml-1">Tone: <span className="text-[var(--text-primary)] capitalize">{tone}</span></span> ·
-                  <span className="ml-1">Interface: <span className="text-[var(--text-primary)] capitalize">{interfaceKind}</span></span> ·
-                  <span className="ml-1">Deploy: <span className="text-[var(--text-primary)] capitalize">{deploymentTarget}</span></span> ·
-                  <span className="ml-1">Model: <span className="text-[var(--text-primary)] uppercase">{budgetTier}</span></span>
-                </p>
-                {coreActions.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {coreActions.map((a) => (
-                      <span key={a} className="text-[10px] border border-[var(--border-color)] px-2 py-0.5 text-[var(--text-secondary)]">{a}</span>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div className="bg-[var(--card-bg)] rounded-xl p-4">
-                  <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">Project</p>
-                  <p className="text-[var(--text-primary)] font-medium">{projectName}</p>
-                  <p className="text-[var(--text-secondary)] text-xs mt-2 font-mono">
-                    slug: {slugPreview || "—"}
+              <div>
+                <label className="block text-sm text-[var(--text-primary)] mb-2">Custom Domain</label>
+                <input
+                  type="text"
+                  value={domain}
+                  onChange={(e) => setDomain(e.target.value)}
+                  placeholder="agent.example.com"
+                  className="w-full bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/50 focus:outline-none focus:border-[var(--accent-color)]/50 transition-colors font-mono"
+                />
+                {domain.trim() && !DOMAIN_RE.test(domain.trim().toLowerCase()) && (
+                  <p className="text-xs text-amber-400 font-mono mt-2">
+                    Not a valid domain — expected like <span>agent.example.com</span>
                   </p>
-                </div>
-                {deploymentTarget === "vps" ? (
-                  <>
-                    <div className="bg-[var(--card-bg)] rounded-xl p-4">
-                      <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">Region</p>
-                      <p className="text-[var(--text-primary)] font-medium">{selectedRegion?.flag} {selectedRegion?.name}</p>
-                    </div>
-                    <div className="bg-[var(--card-bg)] rounded-xl p-4">
-                      <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">Server</p>
-                      <p className="text-[var(--text-primary)] font-medium">{selectedServer?.label} ({selectedServer?.vcpu} vCPU, {selectedServer?.ramGb} GB RAM)</p>
-                    </div>
-                  </>
-                ) : (
-                  <div className="bg-[var(--card-bg)] rounded-xl p-4 col-span-2">
-                    <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">Runtime</p>
-                    <p className="text-[var(--text-primary)] font-medium capitalize">{deploymentTarget} — managed pool</p>
-                    <p className="text-[var(--text-secondary)] text-xs mt-1">No region or server required. Billed per request from credits.</p>
-                  </div>
                 )}
-                <div className="bg-[var(--card-bg)] rounded-xl p-4">
-                  <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">Billing</p>
-                  <p className="text-[var(--text-primary)] font-medium">{billingInterval === "year" ? "Yearly" : "Monthly"}</p>
-                </div>
-                {extraStorageGb > 0 && (
-                  <div className="bg-[var(--card-bg)] rounded-xl p-4">
-                    <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">Extra Storage</p>
-                    <p className="text-[var(--text-primary)] font-medium">{extraStorageGb} GB</p>
-                  </div>
-                )}
-                {sshKey && (
-                  <div className="bg-[var(--card-bg)] rounded-xl p-4">
-                    <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">SSH Key</p>
-                    <p className="text-[var(--text-primary)] font-medium font-mono text-xs truncate">{sshKey.slice(0, 40)}...</p>
-                  </div>
-                )}
+                <p className="text-[11px] font-mono text-[var(--text-secondary)] mt-2">
+                  Leave blank to expose on the server IP over HTTP. You can attach a domain later.
+                  After deploy, add an <span className="text-[var(--text-primary)]">A</span> record pointing to the server IP — we&apos;ll show the exact value.
+                </p>
               </div>
-
-              {/* Price breakdown */}
-              {price && (
-                <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-6 space-y-3">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-[var(--text-secondary)]">Server ({selectedServer?.label})</span>
-                    <span className="text-[var(--text-primary)]">{formatUsd(price.serverPrice)}</span>
-                  </div>
-                  {price.storagePrice > 0 && (
-                    <div className="flex justify-between text-sm">
-                      <span className="text-[var(--text-secondary)]">Extra Storage ({extraStorageGb} GB)</span>
-                      <span className="text-[var(--text-primary)]">{formatUsd(price.storagePrice)}</span>
-                    </div>
-                  )}
-                  <div className="border-t border-[var(--border-color)] pt-3 flex justify-between">
-                    <span className="text-[var(--text-primary)] font-semibold">Total</span>
-                    <span className="text-[var(--text-primary)] font-bold text-xl">
-                      {formatUsd(price.total)}
-                      <span className="text-[var(--text-secondary)] text-sm font-normal">
-                        /{billingInterval === "year" ? "year" : "month"}
-                      </span>
-                    </span>
-                  </div>
-                  {price.yearlyDiscountApplied && (
-                    <p className="text-emerald-400 text-xs">~17% savings with yearly billing</p>
-                  )}
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -939,7 +926,7 @@ export default function DeployPage() {
           Back
         </button>
         <div className="flex items-center gap-3">
-          {step === "review" ? (
+          {step === STEPS[STEPS.length - 1] ? (
             <button
               onClick={handleDeploy}
               disabled={deploying || !canNext}

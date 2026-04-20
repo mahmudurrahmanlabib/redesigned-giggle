@@ -1,15 +1,16 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
 
 const STATUS_STYLES: Record<string, string> = {
+  pending: "bg-amber-500/10 text-amber-400 border-amber-500/30",
   running: "bg-[var(--accent-dim)] text-[var(--accent-color)] border-[var(--accent-color)]/30",
   provisioning: "bg-amber-500/10 text-amber-400 border-amber-500/30",
   stopped: "bg-[var(--card-bg)] text-[var(--text-secondary)] border-[var(--border-color)]",
-  failed: "bg-red-500/10 text-red-400 border-red-500/30",
-  deleted: "bg-[var(--card-bg)] text-[var(--text-secondary)]/50 border-[var(--border-color)]",
+  failed_provisioning: "bg-red-500/10 text-red-400 border-red-500/30",
+  deleting: "bg-zinc-800/20 text-zinc-400 border-zinc-800/30",
 }
 
 type Item = {
@@ -25,12 +26,60 @@ type Item = {
   recentLogs: { id: string; level: string; message: string; createdAt: string }[]
 }
 
-const FILTERS = ["all", "running", "provisioning", "stopped", "failed"] as const
+const FILTERS = [
+  "all",
+  "running",
+  "provisioning",
+  "stopped",
+  "failed_provisioning",
+  "deleting",
+] as const
 type Filter = (typeof FILTERS)[number]
 
-export function InstancesFilter({ items }: { items: Item[] }) {
+export function InstancesFilter({ items: initialItems }: { items: Item[] }) {
+  const [items, setItems] = useState(initialItems)
   const [q, setQ] = useState("")
   const [status, setStatus] = useState<Filter>("all")
+
+  const hasProvisioning = items.some(
+    (i) => i.status === "pending" || i.status === "provisioning" || i.status === "deleting",
+  )
+
+  useEffect(() => {
+    if (!hasProvisioning) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    async function poll() {
+      try {
+        const r = await fetch("/api/instances", { cache: "no-store" })
+        if (!r.ok || cancelled) return
+        const rows = await r.json()
+        setItems((prev) =>
+          prev.map((item) => {
+            const updated = rows.find((r: { id: string }) => r.id === item.id)
+            if (!updated) return item
+            return {
+              ...item,
+              status: updated.status,
+              ipAddress: updated.ipAddress,
+            }
+          })
+        )
+      } catch {
+        /* retry next interval */
+      }
+      if (!cancelled) {
+        timer = setTimeout(poll, 5_000)
+      }
+    }
+
+    timer = setTimeout(poll, 3_000)
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [hasProvisioning])
 
   const filtered = useMemo(
     () =>
@@ -96,12 +145,22 @@ export function InstancesFilter({ items }: { items: Item[] }) {
                     <Badge className={STATUS_STYLES[instance.status] || STATUS_STYLES.stopped}>
                       {instance.status}
                     </Badge>
+                    {(instance.status === "provisioning" ||
+                      instance.status === "pending" ||
+                      instance.status === "deleting") && (
+                      <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                    )}
                   </div>
                   <p className="text-xs text-[var(--text-secondary)] mt-1 font-mono">
-                    {instance.slug} ·{" "}
-                    <span className="text-[var(--accent-color)]">
-                      gateway.sovereignml.ai/{instance.id.slice(0, 8)}
-                    </span>
+                    {instance.slug}
+                    {instance.ipAddress && (
+                      <>
+                        {" · "}
+                        <span className="text-[var(--accent-color)]">
+                          {instance.ipAddress}
+                        </span>
+                      </>
+                    )}
                   </p>
                 </div>
                 <span className="text-xs text-[var(--text-secondary)] font-mono">→ Manage</span>
