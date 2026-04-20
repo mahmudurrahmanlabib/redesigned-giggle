@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/auth"
-import { prisma } from "@/lib/prisma"
+import { db, instances, instanceLogs, eq } from "@/db"
 import { encryptSecret } from "@/lib/crypto-secret"
 import { reprovisionBotEnv } from "@/lib/provisioner"
 
@@ -39,7 +39,9 @@ export async function POST(
 
   const { instanceId } = await params
   const isAdmin = (session.user as { role?: string }).role === "admin"
-  const instance = await prisma.instance.findUnique({ where: { id: instanceId } })
+  const instance = await db.query.instances.findFirst({
+    where: eq(instances.id, instanceId),
+  })
   if (!instance) return NextResponse.json({ error: "Not found" }, { status: 404 })
   if (!isAdmin && instance.userId !== session.user.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
@@ -80,26 +82,25 @@ export async function POST(
   }
 
   // Persist (encrypted) and push fresh env to the container.
-  const updated = await prisma.instance.update({
-    where: { id: instanceId },
-    data: {
+  const [updated] = await db
+    .update(instances)
+    .set({
       telegramBotTokenEnc: encryptSecret(body.token),
       telegramUsername: me.result.username ?? null,
       interfaceKind: "telegram",
-    },
-  })
+    })
+    .where(eq(instances.id, instanceId))
+    .returning()
   try {
     await reprovisionBotEnv(updated)
   } catch (err) {
     console.warn(`[interfaces/connect] reprovision failed:`, err)
   }
 
-  await prisma.instanceLog.create({
-    data: {
-      instanceId,
-      level: "info",
-      message: `Telegram connected as @${me.result.username ?? "(no username)"}.`,
-    },
+  await db.insert(instanceLogs).values({
+    instanceId,
+    level: "info",
+    message: `Telegram connected as @${me.result.username ?? "(no username)"}.`,
   })
 
   return NextResponse.json({

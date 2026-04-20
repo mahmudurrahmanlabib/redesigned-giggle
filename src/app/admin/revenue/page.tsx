@@ -1,18 +1,18 @@
-import { prisma } from "@/lib/prisma"
+import { db, eq, subscriptions, instances } from "@/db"
 
 export default async function AdminRevenuePage() {
-  const [subscriptions, instances] = await Promise.all([
-    prisma.subscription.findMany({
-      where: { status: "active" },
-      include: { plan: true, instance: { include: { serverConfig: true } } },
+  const [activeSubs, runningInstances] = await Promise.all([
+    db.query.subscriptions.findMany({
+      where: eq(subscriptions.status, "active"),
+      with: { plan: true, instance: { with: { serverConfig: true } } },
     }),
-    prisma.instance.findMany({
-      where: { status: "running" },
-      include: { serverConfig: true },
+    db.query.instances.findMany({
+      where: eq(instances.status, "running"),
+      with: { serverConfig: true },
     }),
   ])
 
-  const monthlyRecurring = instances.reduce((sum, inst) => {
+  const monthlyRecurring = runningInstances.reduce((sum, inst) => {
     if (inst.billingInterval === "year") {
       return sum + inst.serverConfig.priceYearly / 12
     }
@@ -33,17 +33,17 @@ export default async function AdminRevenuePage() {
         </div>
         <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
           <p className="text-sm text-zinc-400">Active Subscriptions</p>
-          <p className="text-3xl font-bold mt-1 text-blue-400">{subscriptions.length}</p>
+          <p className="text-3xl font-bold mt-1 text-blue-400">{activeSubs.length}</p>
         </div>
         <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
           <p className="text-sm text-zinc-400">Running Instances</p>
-          <p className="text-3xl font-bold mt-1 text-violet-400">{instances.length}</p>
+          <p className="text-3xl font-bold mt-1 text-violet-400">{runningInstances.length}</p>
         </div>
       </div>
 
       <div>
         <h2 className="text-lg font-semibold text-white mb-4">Active Instance Revenue</h2>
-        {instances.length === 0 ? (
+        {runningInstances.length === 0 ? (
           <div className="bg-white/5 border border-white/10 rounded-xl p-8 text-center">
             <p className="text-zinc-400">No running instances.</p>
           </div>
@@ -59,7 +59,7 @@ export default async function AdminRevenuePage() {
                 </tr>
               </thead>
               <tbody>
-                {instances.map((inst) => {
+                {runningInstances.map((inst) => {
                   const monthly = inst.billingInterval === "year"
                     ? inst.serverConfig.priceYearly / 12
                     : inst.serverConfig.priceMonthly

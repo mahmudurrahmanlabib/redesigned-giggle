@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
-import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
+import { db, eq, and, desc, subscriptions, sql } from "@/db"
+import type { SQL } from "drizzle-orm"
 
 export async function GET(request: Request) {
   try {
@@ -16,32 +17,33 @@ export async function GET(request: Request) {
     const search = searchParams.get("search") || ""
     const status = searchParams.get("status") || ""
 
-    const where: Record<string, unknown> = {}
-
+    const conditions: SQL[] = []
     if (status) {
-      where.status = status
+      conditions.push(eq(subscriptions.status, status))
     }
 
-    if (search) {
-      where.user = {
-        OR: [
-          { name: { contains: search } },
-          { email: { contains: search } },
-        ],
-      }
-    }
-
-    const subscriptions = await prisma.subscription.findMany({
-      where,
-      include: {
-        user: { select: { id: true, name: true, email: true } },
+    const allSubs = await db.query.subscriptions.findMany({
+      where: conditions.length > 0 ? and(...conditions) : undefined,
+      with: {
+        user: true,
         plan: true,
-        instance: { include: { serverConfig: true, region: true } },
+        instance: { with: { serverConfig: true, region: true } },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: desc(subscriptions.createdAt),
     })
 
-    return NextResponse.json(subscriptions)
+    if (search) {
+      const lower = search.toLowerCase()
+      return NextResponse.json(
+        allSubs.filter(
+          (s) =>
+            s.user?.name?.toLowerCase().includes(lower) ||
+            s.user?.email?.toLowerCase().includes(lower)
+        )
+      )
+    }
+
+    return NextResponse.json(allSubs)
   } catch (error) {
     console.error("Failed to fetch subscriptions:", error)
     return NextResponse.json(

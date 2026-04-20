@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { prisma } from "@/lib/prisma"
+import { db, users, verificationTokens, eq } from "@/db"
 import { rateLimit } from "@/lib/rate-limit"
 import { sendPasswordResetEmail } from "@/lib/email"
 import crypto from "crypto"
@@ -17,23 +17,25 @@ export async function POST(request: Request) {
     }
 
     // Always return success to not leak whether email exists
-    const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } })
+    const user = await db.query.users.findFirst({
+      where: eq(users.email, email.toLowerCase()),
+    })
 
     if (user) {
       // Delete any existing tokens for this user
-      await prisma.verificationToken.deleteMany({ where: { identifier: email.toLowerCase() } })
+      await db
+        .delete(verificationTokens)
+        .where(eq(verificationTokens.identifier, email.toLowerCase()))
 
       // Generate token
       const token = crypto.randomBytes(32).toString("hex")
       const hashedToken = crypto.createHash("sha256").update(token).digest("hex")
 
       // Store hashed token (expires in 1 hour)
-      await prisma.verificationToken.create({
-        data: {
-          identifier: email.toLowerCase(),
-          token: hashedToken,
-          expires: new Date(Date.now() + 60 * 60 * 1000),
-        },
+      await db.insert(verificationTokens).values({
+        identifier: email.toLowerCase(),
+        token: hashedToken,
+        expires: new Date(Date.now() + 60 * 60 * 1000),
       })
 
       // Send email with unhashed token

@@ -1,5 +1,5 @@
 // Deployment regions. Edit this list to add/remove locations across the app.
-// The seed script writes these into the Region table so Prisma FKs work,
+// The seed script writes these into the Region table so FKs work,
 // but the wizard reads directly from this typed array.
 
 export type RegionConfig = {

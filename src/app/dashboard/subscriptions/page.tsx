@@ -1,5 +1,5 @@
 import { auth } from "@/auth"
-import { prisma } from "@/lib/prisma"
+import { db, eq, desc, subscriptions } from "@/db"
 import { redirect } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 
@@ -14,13 +14,13 @@ export default async function SubscriptionsPage() {
   const session = await auth()
   if (!session?.user?.id) redirect("/login")
 
-  const subscriptions = await prisma.subscription.findMany({
-    where: { userId: session.user.id },
-    include: {
+  const rows = await db.query.subscriptions.findMany({
+    where: eq(subscriptions.userId, session.user.id),
+    with: {
       plan: true,
-      instance: { include: { serverConfig: true, region: true } },
+      instance: { with: { serverConfig: true, region: true } },
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: desc(subscriptions.createdAt),
   })
 
   return (
@@ -30,13 +30,13 @@ export default async function SubscriptionsPage() {
         <p className="text-[var(--text-secondary)] mt-1">Your active and past subscriptions</p>
       </div>
 
-      {subscriptions.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="bg-[var(--card-bg)] border border-[var(--border-color)] rounded-2xl p-12 text-center">
           <p className="text-[var(--text-secondary)]">No subscriptions yet. Deploy an instance to get started.</p>
         </div>
       ) : (
         <div className="space-y-4">
-          {subscriptions.map((sub) => (
+          {rows.map((sub) => (
             <div
               key={sub.id}
               className="bg-[var(--card-bg)] backdrop-blur-xl border border-[var(--border-color)] rounded-2xl p-6 space-y-3"

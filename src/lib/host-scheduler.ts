@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma"
+import { db, botHosts, instances, eq, and, isNotNull, sql } from "@/db"
 
 export class FleetFullError extends Error {
   constructor() {
@@ -27,20 +27,30 @@ export type PickedHost = {
  * hosts exist at all, FleetFullError if every host is at capacity.
  */
 export async function pickHost(): Promise<PickedHost> {
-  const hosts = await prisma.botHost.findMany({
-    where: { status: "ready" },
-    include: { _count: { select: { instances: true } } },
+  const hosts = await db.query.botHosts.findMany({
+    where: eq(botHosts.status, "ready"),
   })
   if (hosts.length === 0) {
     throw new FleetEmptyError()
   }
+
+  const counts = await Promise.all(
+    hosts.map(async (h) => {
+      const rows = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(instances)
+        .where(eq(instances.botHostId, h.id))
+      return { id: h.id, count: rows[0]?.count ?? 0 }
+    }),
+  )
+  const countById = new Map(counts.map((c) => [c.id, c.count]))
 
   const ranked = hosts
     .map((h) => ({
       id: h.id,
       ipAddress: h.ipAddress,
       capacity: h.capacity,
-      runningCount: h._count.instances,
+      runningCount: countById.get(h.id) ?? 0,
     }))
     .filter((h) => h.runningCount < h.capacity)
     .sort((a, b) => a.runningCount - b.runningCount)
@@ -57,9 +67,9 @@ export async function pickHost(): Promise<PickedHost> {
  * unused one.
  */
 export async function allocatePort(botHostId: string): Promise<number> {
-  const used = await prisma.instance.findMany({
-    where: { botHostId, containerPort: { not: null } },
-    select: { containerPort: true },
+  const used = await db.query.instances.findMany({
+    where: and(eq(instances.botHostId, botHostId), isNotNull(instances.containerPort)),
+    columns: { containerPort: true },
   })
   const taken = new Set(used.map((r) => r.containerPort).filter((p): p is number => typeof p === "number"))
   for (let port = 4000; port <= 5999; port++) {

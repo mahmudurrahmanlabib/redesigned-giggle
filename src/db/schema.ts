@@ -1,9 +1,5 @@
 // Drizzle schema — single source of truth for the Postgres database.
 //
-// Translated model-for-model from the old `prisma/schema.prisma`.
-// Column names match the Prisma columns exactly (camelCase) so the
-// on-disk schema is stable across the migration.
-//
 // `drizzle-kit push` syncs this file → Postgres. No migration lockfile,
 // no `migrate deploy`, no codegen step.
 
@@ -66,8 +62,6 @@ export const users = pgTable(
 
 // Auth.js / NextAuth adapter tables — column names & PKs follow the
 // DrizzleAdapter defaults so the adapter typechecks cleanly.
-// Schema is reprovisioned (bootstrap-pg.sh runs `drizzle-kit push` on
-// a fresh DB), so PK changes vs. the old Prisma schema are safe.
 
 export const accounts = pgTable(
   "Account",

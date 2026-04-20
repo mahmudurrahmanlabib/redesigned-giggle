@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
-import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
+import { db, eq, subscriptions } from "@/db"
 
 export async function PATCH(
   request: Request,
@@ -19,21 +19,22 @@ export async function PATCH(
     const body = await request.json()
     const { status } = body as { status?: string }
 
-    const subscription = await prisma.subscription.findUnique({
-      where: { id: subscriptionId },
+    const existing = await db.query.subscriptions.findFirst({
+      where: eq(subscriptions.id, subscriptionId),
     })
 
-    if (!subscription) {
+    if (!existing) {
       return NextResponse.json({ error: "Subscription not found" }, { status: 404 })
     }
 
     const updateData: Record<string, unknown> = {}
     if (status) updateData.status = status
 
-    const updated = await prisma.subscription.update({
-      where: { id: subscriptionId },
-      data: updateData,
-    })
+    const [updated] = await db
+      .update(subscriptions)
+      .set(updateData)
+      .where(eq(subscriptions.id, subscriptionId))
+      .returning()
 
     return NextResponse.json(updated)
   } catch (error) {
@@ -57,17 +58,15 @@ export async function DELETE(
 
     const { subscriptionId } = await params
 
-    const subscription = await prisma.subscription.findUnique({
-      where: { id: subscriptionId },
+    const existing = await db.query.subscriptions.findFirst({
+      where: eq(subscriptions.id, subscriptionId),
     })
 
-    if (!subscription) {
+    if (!existing) {
       return NextResponse.json({ error: "Subscription not found" }, { status: 404 })
     }
 
-    await prisma.subscription.delete({
-      where: { id: subscriptionId },
-    })
+    await db.delete(subscriptions).where(eq(subscriptions.id, subscriptionId))
 
     return NextResponse.json({ message: "Subscription deleted" })
   } catch (error) {

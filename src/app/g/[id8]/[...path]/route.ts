@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { prisma } from "@/lib/prisma"
+import { db, like, instances } from "@/db"
 
 /**
  * Path-based gateway: /g/<id8>/<...> proxies to the bot's container at
@@ -38,16 +38,16 @@ async function handle(req: NextRequest, params: { id8: string; path: string[] })
     return NextResponse.json({ error: "invalid id8" }, { status: 400 })
   }
 
-  const candidates = await prisma.instance.findMany({
-    where: { id: { startsWith: id8 } },
-    select: {
+  const candidates = await db.query.instances.findMany({
+    where: like(instances.id, `${id8}%`),
+    columns: {
       id: true,
       status: true,
       ipAddress: true,
       containerPort: true,
       botToken: true,
     },
-    take: 2,
+    limit: 2,
   })
   if (candidates.length === 0) {
     return NextResponse.json({ error: "not found" }, { status: 404 })
@@ -88,7 +88,6 @@ async function handle(req: NextRequest, params: { id8: string; path: string[] })
     )
   }
 
-  // Strip hop-by-hop headers and pass through.
   const respHeaders = new Headers()
   for (const [k, v] of upstreamResp.headers) {
     if (HOP_BY_HOP.has(k.toLowerCase())) continue

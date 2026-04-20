@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import crypto from "node:crypto"
 import { auth } from "@/auth"
-import { Prisma } from "@prisma/client"
-import { prisma } from "@/lib/prisma"
+import { db, eq, instances, instanceLogs, regions, serverConfigs, sshKeys, users, plans, subscriptions } from "@/db"
 import { stripe, isStripeConfigured } from "@/lib/stripe"
 import { createSlug, encryptRootPassword, computeSshFingerprint, isValidPublicKey } from "@/lib/instance"
 import { calcInstancePrice } from "@/lib/pricing"
@@ -45,7 +44,6 @@ export async function POST(req: NextRequest) {
   let normalizedDomain: string | null = null
   if (typeof domain === "string" && domain.trim().length > 0) {
     const trimmed = domain.trim().toLowerCase()
-    // Minimal FQDN check: 2+ labels, alnum/dash, no trailing dot required.
     if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(trimmed)) {
       return NextResponse.json({ error: "Invalid domain" }, { status: 400 })
     }
@@ -56,8 +54,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
   }
 
-  // agentConfig is optional today so legacy deploys keep working; when present
-  // it must validate.
   let parsedAgentConfig: ReturnType<typeof parseAgentConfig> | null = null
   if (agentConfigInput) {
     parsedAgentConfig = parseAgentConfig(agentConfigInput)
@@ -67,8 +63,8 @@ export async function POST(req: NextRequest) {
   }
 
   const [region, serverConfig] = await Promise.all([
-    prisma.region.findUnique({ where: { slug: regionSlug } }),
-    prisma.serverConfig.findUnique({ where: { slug: serverConfigSlug } }),
+    db.query.regions.findFirst({ where: eq(regions.slug, regionSlug) }),
+    db.query.serverConfigs.findFirst({ where: eq(serverConfigs.slug, serverConfigSlug) }),
   ])
 
   if (!region || !region.available) {
@@ -84,39 +80,39 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid SSH public key" }, { status: 400 })
     }
     const fp = computeSshFingerprint(sshPublicKey)
-    const existing = await prisma.sshKey.findFirst({
-      where: { userId: session.user.id, fingerprint: fp },
+    const existing = await db.query.sshKeys.findFirst({
+      where: eq(sshKeys.fingerprint, fp),
     })
     if (existing) {
       sshKeyId = existing.id
     } else {
-      const created = await prisma.sshKey.create({
-        data: {
+      const [created] = await db
+        .insert(sshKeys)
+        .values({
           userId: session.user.id,
           name: `key-${fp.slice(7, 19)}`,
           publicKey: sshPublicKey.trim(),
           fingerprint: fp,
-        },
-      })
+        })
+        .returning()
       sshKeyId = created.id
     }
   }
 
-  // Derive agent-factory fields when agentConfig was supplied.
   let agentFields: {
     agentType: string | null
-    agentConfig: Prisma.InputJsonValue | typeof Prisma.JsonNull
+    agentConfig: unknown
     soulMd: string | null
-    skills: Prisma.InputJsonValue | typeof Prisma.JsonNull
+    skills: unknown
     modelTier: string | null
     botToken: string | null
     deploymentTarget: string | null
     interfaceKind: string | null
   } = {
     agentType: null,
-    agentConfig: Prisma.JsonNull,
+    agentConfig: null,
     soulMd: null,
-    skills: Prisma.JsonNull,
+    skills: null,
     modelTier: null,
     botToken: null,
     deploymentTarget: null,
@@ -126,12 +122,11 @@ export async function POST(req: NextRequest) {
     const cfg = parsedAgentConfig.data
     const skills = selectSkills(cfg)
     const soulMd = generateSoul(cfg, skills)
-    // Sanity check model routing early so we fail fast instead of during provision.
     routeModel(cfg.budget_tier)
     const botToken = "sk_bot_" + crypto.randomBytes(24).toString("hex")
     agentFields = {
       agentType: cfg.use_case,
-      agentConfig: cfg as unknown as Prisma.InputJsonValue,
+      agentConfig: cfg,
       soulMd,
       skills,
       modelTier: cfg.budget_tier,
@@ -141,8 +136,9 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const instance = await prisma.instance.create({
-    data: {
+  const [instance] = await db
+    .insert(instances)
+    .values({
       userId: session.user.id,
       name: name.trim(),
       slug: createSlug(name),
@@ -155,24 +151,25 @@ export async function POST(req: NextRequest) {
       rootPasswordEnc: rootPassword ? encryptRootPassword(rootPassword) : undefined,
       domain: normalizedDomain,
       ...agentFields,
-    },
-  })
+    })
+    .returning()
 
-  await prisma.instanceLog.create({
-    data: {
-      instanceId: instance.id,
-      level: "info",
-      message: `Instance created. Server: ${serverConfig.label}, Region: ${region.name}. Awaiting payment.`,
-    },
+  await db.insert(instanceLogs).values({
+    instanceId: instance.id,
+    level: "info",
+    message: `Instance created. Server: ${serverConfig.label}, Region: ${region.name}. Awaiting payment.`,
   })
 
   if (isStripeConfigured()) {
-    const plan = await prisma.plan.findFirst({ where: { tier: "starter", isActive: true } })
+    const plan = await db.query.plans.findFirst({
+      where: eq(plans.isActive, true),
+    })
 
-    let stripeCustomerId = (await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { stripeCustomerId: true },
-    }))?.stripeCustomerId
+    const userRow = await db.query.users.findFirst({
+      where: eq(users.id, session.user.id),
+      columns: { stripeCustomerId: true },
+    })
+    let stripeCustomerId = userRow?.stripeCustomerId
 
     if (!stripeCustomerId) {
       const customer = await stripe.customers.create({
@@ -180,10 +177,10 @@ export async function POST(req: NextRequest) {
         metadata: { userId: session.user.id },
       })
       stripeCustomerId = customer.id
-      await prisma.user.update({
-        where: { id: session.user.id },
-        data: { stripeCustomerId },
-      })
+      await db
+        .update(users)
+        .set({ stripeCustomerId })
+        .where(eq(users.id, session.user.id))
     }
 
     const price = calcInstancePrice({
@@ -229,46 +226,44 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  // Dev mode: skip Stripe, auto-activate. Provision now so the bot is usable.
+  // Dev mode: skip Stripe, auto-activate.
   try {
-    const freshInstance = await prisma.instance.findUnique({ where: { id: instance.id } })
+    const freshInstance = await db.query.instances.findFirst({
+      where: eq(instances.id, instance.id),
+    })
     if (freshInstance) {
       await provisionBot(freshInstance)
     }
   } catch (err) {
     console.error("[deploy] provisionBot failed (dev path):", err)
-    await prisma.instance.update({
-      where: { id: instance.id },
-      data: { status: "failed" },
-    })
-    await prisma.instanceLog.create({
-      data: {
-        instanceId: instance.id,
-        level: "error",
-        message: `Provisioning failed: ${err instanceof Error ? err.message : String(err)}`,
-      },
-    })
-  }
-
-  const plan = await prisma.plan.findFirst({ where: { tier: "starter", isActive: true } })
-  if (plan) {
-    await prisma.subscription.create({
-      data: {
-        userId: session.user.id,
-        planId: plan.id,
-        instanceId: instance.id,
-        interval: billingInterval,
-        status: "active",
-      },
-    })
-  }
-
-  await prisma.instanceLog.create({
-    data: {
+    await db
+      .update(instances)
+      .set({ status: "failed" })
+      .where(eq(instances.id, instance.id))
+    await db.insert(instanceLogs).values({
       instanceId: instance.id,
-      level: "info",
-      message: "Dev mode: instance auto-activated (Stripe not configured).",
-    },
+      level: "error",
+      message: `Provisioning failed: ${err instanceof Error ? err.message : String(err)}`,
+    })
+  }
+
+  const plan = await db.query.plans.findFirst({
+    where: eq(plans.isActive, true),
+  })
+  if (plan) {
+    await db.insert(subscriptions).values({
+      userId: session.user.id,
+      planId: plan.id,
+      instanceId: instance.id,
+      interval: billingInterval,
+      status: "active",
+    })
+  }
+
+  await db.insert(instanceLogs).values({
+    instanceId: instance.id,
+    level: "info",
+    message: "Dev mode: instance auto-activated (Stripe not configured).",
   })
 
   return NextResponse.json({ instanceId: instance.id })

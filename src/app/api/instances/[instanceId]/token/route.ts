@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import crypto from "node:crypto"
 import { auth } from "@/auth"
-import { prisma } from "@/lib/prisma"
+import { db, instances, instanceLogs, eq } from "@/db"
 import { reprovisionBotEnv } from "@/lib/provisioner"
 
 async function requireOwner(instanceId: string) {
@@ -10,7 +10,9 @@ async function requireOwner(instanceId: string) {
     return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) }
   }
   const isAdmin = (session.user as { role?: string }).role === "admin"
-  const instance = await prisma.instance.findUnique({ where: { id: instanceId } })
+  const instance = await db.query.instances.findFirst({
+    where: eq(instances.id, instanceId),
+  })
   if (!instance) {
     return { error: NextResponse.json({ error: "Not found" }, { status: 404 }) }
   }
@@ -39,10 +41,11 @@ export async function POST(
   if ("error" in check) return check.error
 
   const newToken = "sk_bot_" + crypto.randomBytes(24).toString("hex")
-  const updated = await prisma.instance.update({
-    where: { id: instanceId },
-    data: { botToken: newToken },
-  })
+  const [updated] = await db
+    .update(instances)
+    .set({ botToken: newToken })
+    .where(eq(instances.id, instanceId))
+    .returning()
 
   // Push new env to the running container so the new token takes effect.
   try {
@@ -51,8 +54,10 @@ export async function POST(
     console.warn(`[token] reprovision after rotate failed for ${instanceId}:`, err)
   }
 
-  await prisma.instanceLog.create({
-    data: { instanceId, level: "info", message: "Bot token rotated." },
+  await db.insert(instanceLogs).values({
+    instanceId,
+    level: "info",
+    message: "Bot token rotated.",
   })
 
   return NextResponse.json({ botToken: newToken })

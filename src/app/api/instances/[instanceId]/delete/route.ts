@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/auth"
-import { prisma } from "@/lib/prisma"
+import { db, instances, instanceLogs, subscriptions, eq } from "@/db"
 import { deleteBot } from "@/lib/provisioner"
 import { stripe, isStripeConfigured } from "@/lib/stripe"
 
@@ -16,8 +16,8 @@ export async function POST(
   const { instanceId } = await params
   const isAdmin = (session.user as { role?: string }).role === "admin"
 
-  const instance = await prisma.instance.findUnique({
-    where: { id: instanceId },
+  const instance = await db.query.instances.findFirst({
+    where: eq(instances.id, instanceId),
   })
 
   if (!instance) {
@@ -34,17 +34,15 @@ export async function POST(
     // Non-fatal — we still want the DB record to reflect deletion.
   }
 
-  await prisma.instanceLog.create({
-    data: {
-      instanceId,
-      level: "warn",
-      message: `Instance deleted by ${isAdmin ? "admin" : "user"}.`,
-    },
+  await db.insert(instanceLogs).values({
+    instanceId,
+    level: "warn",
+    message: `Instance deleted by ${isAdmin ? "admin" : "user"}.`,
   })
 
   // Cancel linked subscription if exists
-  const sub = await prisma.subscription.findFirst({
-    where: { instanceId },
+  const sub = await db.query.subscriptions.findFirst({
+    where: eq(subscriptions.instanceId, instanceId),
   })
   if (sub) {
     if (isStripeConfigured() && sub.stripeSubscriptionId) {
@@ -54,10 +52,10 @@ export async function POST(
         console.warn(`[delete] stripe cancel failed:`, err)
       }
     }
-    await prisma.subscription.update({
-      where: { id: sub.id },
-      data: { status: "canceled" },
-    })
+    await db
+      .update(subscriptions)
+      .set({ status: "canceled" })
+      .where(eq(subscriptions.id, sub.id))
   }
 
   return NextResponse.json({ success: true })

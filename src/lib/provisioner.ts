@@ -1,5 +1,5 @@
-import type { Instance } from "@prisma/client"
-import { prisma } from "@/lib/prisma"
+import type { InferSelectModel } from "drizzle-orm"
+import { db, instances, instanceLogs, eq } from "@/db"
 import { allocatePort, FleetEmptyError, FleetFullError, pickHost } from "@/lib/host-scheduler"
 import {
   sshComposeUp,
@@ -29,6 +29,8 @@ import {
 import { generateMockIp } from "@/lib/instance"
 import { routeModel } from "@/lib/model-router"
 import type { BudgetTier } from "@/lib/agent-config"
+
+type Instance = InferSelectModel<typeof instances>
 
 const BOT_RUNTIME_IMAGE = () =>
   process.env.BOT_RUNTIME_IMAGE || "ghcr.io/sovereignml/sovereign-bot-runtime:latest"
@@ -123,16 +125,14 @@ export async function provisionBot(instance: Instance): Promise<ProvisionResult>
   if (!isLiveMode()) {
     // Dev fallback — no Linode / SSH credentials. Preserve existing mock flow.
     const ipAddress = instance.ipAddress ?? generateMockIp()
-    await prisma.instance.update({
-      where: { id: instance.id },
-      data: { ipAddress, status: "running", lastActiveAt: new Date() },
-    })
-    await prisma.instanceLog.create({
-      data: {
-        instanceId: instance.id,
-        level: "info",
-        message: `[dev] Mock-provisioned (${target}). Set LINODE_API_TOKEN + SSH_FLEET_PRIVATE_KEY to provision for real.`,
-      },
+    await db
+      .update(instances)
+      .set({ ipAddress, status: "running", lastActiveAt: new Date() })
+      .where(eq(instances.id, instance.id))
+    await db.insert(instanceLogs).values({
+      instanceId: instance.id,
+      level: "info",
+      message: `[dev] Mock-provisioned (${target}). Set LINODE_API_TOKEN + SSH_FLEET_PRIVATE_KEY to provision for real.`,
     })
     return { ipAddress, mocked: true }
   }
@@ -149,17 +149,15 @@ async function provisionSharedBot(instance: Instance): Promise<ProvisionResult> 
     host = await pickHost()
   } catch (err) {
     if (err instanceof FleetEmptyError || err instanceof FleetFullError) {
-      await prisma.instanceLog.create({
-        data: {
-          instanceId: instance.id,
-          level: "error",
-          message: `Provisioning failed: ${err.message}`,
-        },
+      await db.insert(instanceLogs).values({
+        instanceId: instance.id,
+        level: "error",
+        message: `Provisioning failed: ${err.message}`,
       })
-      await prisma.instance.update({
-        where: { id: instance.id },
-        data: { status: "failed" },
-      })
+      await db
+        .update(instances)
+        .set({ status: "failed" })
+        .where(eq(instances.id, instance.id))
     }
     throw err
   }
@@ -177,23 +175,21 @@ async function provisionSharedBot(instance: Instance): Promise<ProvisionResult> 
     }
   )
 
-  await prisma.instance.update({
-    where: { id: instance.id },
-    data: {
+  await db
+    .update(instances)
+    .set({
       status: "running",
       ipAddress: host.ipAddress,
       botHostId: host.id,
       containerName,
       containerPort: port,
       lastActiveAt: new Date(),
-    },
-  })
-  await prisma.instanceLog.create({
-    data: {
-      instanceId: instance.id,
-      level: "info",
-      message: `Provisioned on shared host ${host.id} (${host.ipAddress}:${port}).`,
-    },
+    })
+    .where(eq(instances.id, instance.id))
+  await db.insert(instanceLogs).values({
+    instanceId: instance.id,
+    level: "info",
+    message: `Provisioned on shared host ${host.id} (${host.ipAddress}:${port}).`,
   })
 
   return {
@@ -292,9 +288,9 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
 
   const containerName = buildContainerName(instance.id)
 
-  await prisma.instance.update({
-    where: { id: instance.id },
-    data: {
+  await db
+    .update(instances)
+    .set({
       status: "running",
       ipAddress,
       linodeId,
@@ -305,16 +301,14 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       dnsStatus: instance.domain ? "pending" : "ready",
       tlsStatus: instance.domain ? "pending" : "issued",
       lastActiveAt: new Date(),
-    },
-  })
-  await prisma.instanceLog.create({
-    data: {
-      instanceId: instance.id,
-      level: "info",
-      message: `OpenClaw stack deployed on linode ${linodeId} at ${ipAddress}${
-        instance.domain ? ` (domain ${instance.domain})` : ""
-      }.`,
-    },
+    })
+    .where(eq(instances.id, instance.id))
+  await db.insert(instanceLogs).values({
+    instanceId: instance.id,
+    level: "info",
+    message: `OpenClaw stack deployed on linode ${linodeId} at ${ipAddress}${
+      instance.domain ? ` (domain ${instance.domain})` : ""
+    }.`,
   })
 
   return {
@@ -332,58 +326,66 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
 
 export async function restartBot(instance: Instance): Promise<void> {
   if (!isLiveMode() || !instance.containerName || !instance.ipAddress) {
-    await prisma.instance.update({
-      where: { id: instance.id },
-      data: { status: "running", lastActiveAt: new Date() },
-    })
-    await prisma.instanceLog.create({
-      data: { instanceId: instance.id, level: "info", message: "Restart signal received (mock)." },
+    await db
+      .update(instances)
+      .set({ status: "running", lastActiveAt: new Date() })
+      .where(eq(instances.id, instance.id))
+    await db.insert(instanceLogs).values({
+      instanceId: instance.id,
+      level: "info",
+      message: "Restart signal received (mock).",
     })
     return
   }
   await sshDockerRestart({ host: instance.ipAddress }, instance.containerName)
-  await prisma.instance.update({
-    where: { id: instance.id },
-    data: { status: "running", lastActiveAt: new Date() },
-  })
-  await prisma.instanceLog.create({
-    data: { instanceId: instance.id, level: "info", message: "Container restarted." },
+  await db
+    .update(instances)
+    .set({ status: "running", lastActiveAt: new Date() })
+    .where(eq(instances.id, instance.id))
+  await db.insert(instanceLogs).values({
+    instanceId: instance.id,
+    level: "info",
+    message: "Container restarted.",
   })
 }
 
 export async function pauseBot(instance: Instance): Promise<void> {
   if (!isLiveMode() || !instance.containerName || !instance.ipAddress) {
-    await prisma.instance.update({
-      where: { id: instance.id },
-      data: { status: "stopped" },
-    })
+    await db
+      .update(instances)
+      .set({ status: "stopped" })
+      .where(eq(instances.id, instance.id))
     return
   }
   await sshDockerStop({ host: instance.ipAddress }, instance.containerName)
-  await prisma.instance.update({
-    where: { id: instance.id },
-    data: { status: "stopped" },
-  })
-  await prisma.instanceLog.create({
-    data: { instanceId: instance.id, level: "warn", message: "Bot paused." },
+  await db
+    .update(instances)
+    .set({ status: "stopped" })
+    .where(eq(instances.id, instance.id))
+  await db.insert(instanceLogs).values({
+    instanceId: instance.id,
+    level: "warn",
+    message: "Bot paused.",
   })
 }
 
 export async function resumeBot(instance: Instance): Promise<void> {
   if (!isLiveMode() || !instance.containerName || !instance.ipAddress) {
-    await prisma.instance.update({
-      where: { id: instance.id },
-      data: { status: "running" },
-    })
+    await db
+      .update(instances)
+      .set({ status: "running" })
+      .where(eq(instances.id, instance.id))
     return
   }
   await sshDockerStart({ host: instance.ipAddress }, instance.containerName)
-  await prisma.instance.update({
-    where: { id: instance.id },
-    data: { status: "running", lastActiveAt: new Date() },
-  })
-  await prisma.instanceLog.create({
-    data: { instanceId: instance.id, level: "info", message: "Bot resumed." },
+  await db
+    .update(instances)
+    .set({ status: "running", lastActiveAt: new Date() })
+    .where(eq(instances.id, instance.id))
+  await db.insert(instanceLogs).values({
+    instanceId: instance.id,
+    level: "info",
+    message: "Bot resumed.",
   })
 }
 
@@ -398,12 +400,14 @@ export async function deleteBot(instance: Instance): Promise<void> {
   } catch (err) {
     console.warn(`[provisioner] deleteBot cleanup error for ${instance.id}:`, err)
   }
-  await prisma.instance.update({
-    where: { id: instance.id },
-    data: { status: "deleted" },
-  })
-  await prisma.instanceLog.create({
-    data: { instanceId: instance.id, level: "warn", message: "Instance deleted." },
+  await db
+    .update(instances)
+    .set({ status: "deleted" })
+    .where(eq(instances.id, instance.id))
+  await db.insert(instanceLogs).values({
+    instanceId: instance.id,
+    level: "warn",
+    message: "Instance deleted.",
   })
 }
 
@@ -413,8 +417,10 @@ export async function deleteBot(instance: Instance): Promise<void> {
  */
 export async function reprovisionBotEnv(instance: Instance): Promise<void> {
   if (!isLiveMode() || !instance.containerName || !instance.ipAddress || !instance.containerPort) {
-    await prisma.instanceLog.create({
-      data: { instanceId: instance.id, level: "info", message: "Env update signalled (mock)." },
+    await db.insert(instanceLogs).values({
+      instanceId: instance.id,
+      level: "info",
+      message: "Env update signalled (mock).",
     })
     return
   }
@@ -428,7 +434,9 @@ export async function reprovisionBotEnv(instance: Instance): Promise<void> {
       pullFirst: false,
     }
   )
-  await prisma.instanceLog.create({
-    data: { instanceId: instance.id, level: "info", message: "Container restarted with new env." },
+  await db.insert(instanceLogs).values({
+    instanceId: instance.id,
+    level: "info",
+    message: "Container restarted with new env.",
   })
 }

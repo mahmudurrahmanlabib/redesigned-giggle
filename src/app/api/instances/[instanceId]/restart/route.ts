@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/auth"
-import { prisma } from "@/lib/prisma"
+import { db, instances, instanceLogs, eq } from "@/db"
 import { restartBot } from "@/lib/provisioner"
 
 export async function POST(
@@ -15,8 +15,8 @@ export async function POST(
   const { instanceId } = await params
   const isAdmin = (session.user as { role?: string }).role === "admin"
 
-  const instance = await prisma.instance.findUnique({
-    where: { id: instanceId },
+  const instance = await db.query.instances.findFirst({
+    where: eq(instances.id, instanceId),
   })
 
   if (!instance) {
@@ -37,22 +37,18 @@ export async function POST(
     await restartBot(instance)
   } catch (err) {
     console.error(`[restart] failed for ${instanceId}:`, err)
-    await prisma.instanceLog.create({
-      data: {
-        instanceId,
-        level: "error",
-        message: `Restart failed: ${err instanceof Error ? err.message : String(err)}`,
-      },
+    await db.insert(instanceLogs).values({
+      instanceId,
+      level: "error",
+      message: `Restart failed: ${err instanceof Error ? err.message : String(err)}`,
     })
     return NextResponse.json({ error: "Restart failed" }, { status: 500 })
   }
 
-  await prisma.instanceLog.create({
-    data: {
-      instanceId,
-      level: "info",
-      message: `Instance restarted by ${isAdmin ? "admin" : "user"}.`,
-    },
+  await db.insert(instanceLogs).values({
+    instanceId,
+    level: "info",
+    message: `Instance restarted by ${isAdmin ? "admin" : "user"}.`,
   })
 
   return NextResponse.json({ success: true })

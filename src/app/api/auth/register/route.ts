@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { prisma } from "@/lib/prisma"
+import { db, users, eq } from "@/db"
 import { hashPassword } from "@/lib/password"
 import { registerSchema } from "@/lib/validations"
 import { rateLimit } from "@/lib/rate-limit"
@@ -26,8 +26,8 @@ export async function POST(req: Request) {
 
     const { name, email, password } = result.data
 
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
+    const existingUser = await db.query.users.findFirst({
+      where: eq(users.email, email),
     })
 
     if (existingUser) {
@@ -37,12 +37,10 @@ export async function POST(req: Request) {
       )
     }
 
-    await prisma.user.create({
-      data: {
-        name,
-        email,
-        hashedPassword: hashPassword(password),
-      },
+    await db.insert(users).values({
+      name,
+      email,
+      hashedPassword: hashPassword(password),
     })
 
     return NextResponse.json(

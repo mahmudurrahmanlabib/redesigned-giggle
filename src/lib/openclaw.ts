@@ -1,6 +1,9 @@
 import crypto from "node:crypto"
-import type { Instance } from "@prisma/client"
+import type { InferSelectModel } from "drizzle-orm"
+import { instances } from "@/db"
 import { routeModel } from "@/lib/model-router"
+
+type Instance = InferSelectModel<typeof instances>
 import type { BudgetTier } from "@/lib/agent-config"
 
 export const OPENCLAW_IMAGE = () =>

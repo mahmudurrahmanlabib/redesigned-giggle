@@ -1,10 +1,7 @@
 # Bare-metal VPS deploy
 
-This is the non-Docker path: Node + Postgres installed directly on a VPS,
-with the Next.js standalone server managed by **pm2** or **systemd**.
-
-The Docker path (`docker compose up -d`) still works and is unchanged —
-pick one.
+Node + Postgres installed directly on a VPS, with the Next.js standalone
+server managed by **pm2** or **systemd**.
 
 ## Env policy — read this once
 
@@ -58,7 +55,7 @@ That script is idempotent and does everything the old runbook did by hand:
   `AUTH_SECRET` if one isn't already set. Re-runs preserve the existing
   password.
 - Smoke-tests the connection with `psql`.
-- Syncs the schema with `prisma db push`.
+- Syncs the schema with `drizzle-kit push`.
 - `DB_SEED=1 bash scripts/bootstrap-pg.sh` also runs the seed.
 
 Add any other secrets you need (`NEXTAUTH_URL`, `STRIPE_*`, `RESEND_*`,

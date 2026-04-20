@@ -8,10 +8,10 @@
 ;
 ; Assumes:
 ;   - App checked out at /opt/redesigned-giggle (adjust WorkingDirectory below)
-;   - `npm ci && npx prisma generate && npm run build` already run there
+;   - `npm ci && npm run build` already run there
+;   - `npm run db:push` has been run to sync the Drizzle schema
 ;   - /etc/redesigned-giggle.env contains DATABASE_URL, AUTH_SECRET,
 ;     NEXTAUTH_URL, etc. (chmod 600, owned by the app user)
-;   - `npm run deploy:migrate` has been run against the target DB
 
 [Unit]
 Description=redesigned-giggle (Next.js standalone)

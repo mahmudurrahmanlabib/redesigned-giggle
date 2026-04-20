@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 import { userUpdateSchema } from "@/lib/validations";
+import { db, users, eq } from "@/db";
 
 export async function PATCH(
   request: Request,
@@ -30,8 +30,8 @@ export async function PATCH(
 
     const { action, role, bannedReason } = validation.data;
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, userId),
     });
 
     if (!user) {
@@ -46,16 +46,16 @@ export async function PATCH(
         );
       }
 
-      const updatedUser = await prisma.user.update({
-        where: { id: userId },
-        data: { role },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-        },
-      });
+      const [updatedUser] = await db
+        .update(users)
+        .set({ role })
+        .where(eq(users.id, userId))
+        .returning({
+          id: users.id,
+          name: users.name,
+          email: users.email,
+          role: users.role,
+        });
 
       return NextResponse.json(updatedUser);
     }
@@ -68,45 +68,45 @@ export async function PATCH(
         );
       }
 
-      const updatedUser = await prisma.user.update({
-        where: { id: userId },
-        data: {
+      const [updatedUser] = await db
+        .update(users)
+        .set({
           isBanned: true,
           bannedAt: new Date(),
           bannedReason: bannedReason || null,
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-          isBanned: true,
-          bannedAt: true,
-          bannedReason: true,
-        },
-      });
+        })
+        .where(eq(users.id, userId))
+        .returning({
+          id: users.id,
+          name: users.name,
+          email: users.email,
+          role: users.role,
+          isBanned: users.isBanned,
+          bannedAt: users.bannedAt,
+          bannedReason: users.bannedReason,
+        });
 
       return NextResponse.json(updatedUser);
     }
 
     if (action === "unban") {
-      const updatedUser = await prisma.user.update({
-        where: { id: userId },
-        data: {
+      const [updatedUser] = await db
+        .update(users)
+        .set({
           isBanned: false,
           bannedAt: null,
           bannedReason: null,
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-          isBanned: true,
-          bannedAt: true,
-          bannedReason: true,
-        },
-      });
+        })
+        .where(eq(users.id, userId))
+        .returning({
+          id: users.id,
+          name: users.name,
+          email: users.email,
+          role: users.role,
+          isBanned: users.isBanned,
+          bannedAt: users.bannedAt,
+          bannedReason: users.bannedReason,
+        });
 
       return NextResponse.json(updatedUser);
     }
@@ -144,17 +144,15 @@ export async function DELETE(
       );
     }
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, userId),
     });
 
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    await prisma.user.delete({
-      where: { id: userId },
-    });
+    await db.delete(users).where(eq(users.id, userId));
 
     return NextResponse.json({ message: "User deleted successfully" });
   } catch (error) {

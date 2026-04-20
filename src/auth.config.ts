@@ -1,6 +1,6 @@
 import type { NextAuthConfig } from "next-auth"
 
-// Edge-compatible config — NO Prisma, NO bcrypt, NO Node.js modules
+// Edge-compatible config — NO bcrypt, NO Node.js modules
 // This is used by proxy (middleware) and shared with auth.ts
 export default {
   providers: [],

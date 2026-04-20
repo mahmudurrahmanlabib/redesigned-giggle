@@ -1,16 +1,12 @@
 import { NextResponse } from "next/server"
-import { prisma } from "@/lib/prisma"
+import { db, sql } from "@/db"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
 
-/**
- * Liveness + readiness probe consumed by docker-compose healthcheck and any
- * upstream load balancer. Returns 200 iff the app can reach Postgres.
- */
 export async function GET() {
   try {
-    await prisma.$queryRaw`SELECT 1`
+    await db.execute(sql`SELECT 1`)
     return NextResponse.json({ ok: true, db: "up" })
   } catch (err) {
     return NextResponse.json(

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { Prisma } from "@prisma/client"
-import { prisma } from "@/lib/prisma"
+import { db, eq, instances, usageEvents, instanceLogs } from "@/db"
 import { consumeCredits } from "@/lib/credits"
 import { pauseBot } from "@/lib/provisioner"
 
@@ -42,7 +41,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "missing x-bot-token" }, { status: 401 })
   }
 
-  const instance = await prisma.instance.findUnique({ where: { botToken } })
+  const instance = await db.query.instances.findFirst({
+    where: eq(instances.botToken, botToken),
+  })
   if (!instance) {
     return NextResponse.json({ error: "invalid bot token" }, { status: 401 })
   }
@@ -57,24 +58,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "kind and amount are required" }, { status: 400 })
   }
 
-  // Persist the raw event.
-  await prisma.usageEvent.create({
-    data: {
-      instanceId: instance.id,
-      userId: instance.userId,
-      kind: body.kind,
-      amount: Math.round(body.amount),
-      meta: (body.meta ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-    },
+  await db.insert(usageEvents).values({
+    instanceId: instance.id,
+    userId: instance.userId,
+    kind: body.kind,
+    amount: Math.round(body.amount),
+    meta: body.meta ?? null,
   })
 
-  // Touch lastActiveAt on request-kind events so the UI's "last active"
-  // column stays useful even when only tokens events arrive.
   if (body.kind === "request") {
-    await prisma.instance.update({
-      where: { id: instance.id },
-      data: { lastActiveAt: new Date() },
-    })
+    await db
+      .update(instances)
+      .set({ lastActiveAt: new Date() })
+      .where(eq(instances.id, instance.id))
   }
 
   const cost = computeCreditCost(body.kind, body.amount)
@@ -84,18 +80,15 @@ export async function POST(req: NextRequest) {
 
   const result = await consumeCredits(instance.userId, cost, `consume:${instance.id}:${body.kind}`)
   if (!result.ok) {
-    // Pause the bot to stop further spend.
     try {
       await pauseBot(instance)
     } catch (err) {
       console.warn(`[usage] pauseBot failed for ${instance.id}:`, err)
     }
-    await prisma.instanceLog.create({
-      data: {
-        instanceId: instance.id,
-        level: "warn",
-        message: "Credits exhausted. Bot paused. Top up to resume.",
-      },
+    await db.insert(instanceLogs).values({
+      instanceId: instance.id,
+      level: "warn",
+      message: "Credits exhausted. Bot paused. Top up to resume.",
     })
     return NextResponse.json(
       { ok: false, reason: "credits_exhausted", balance: result.balance },

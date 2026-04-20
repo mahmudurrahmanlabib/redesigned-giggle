@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { auth } from "@/auth"
-import { prisma } from "@/lib/prisma"
+import { db, users, accounts, eq, and } from "@/db"
 import { hashPassword, verifyPassword } from "@/lib/password"
 
 export async function GET() {
@@ -8,15 +8,25 @@ export async function GET() {
     const session = await auth()
     if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { id: true, name: true, email: true, image: true, hashedPassword: true, createdAt: true, telegramId: true, twitterHandle: true, discordId: true },
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, session.user.id),
+      columns: {
+        id: true,
+        name: true,
+        email: true,
+        image: true,
+        hashedPassword: true,
+        createdAt: true,
+        telegramId: true,
+        twitterHandle: true,
+        discordId: true,
+      },
     })
     if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 })
 
     // Check if user has Google account linked
-    const googleAccount = await prisma.account.findFirst({
-      where: { userId: user.id, provider: "google" },
+    const googleAccount = await db.query.accounts.findFirst({
+      where: and(eq(accounts.userId, user.id), eq(accounts.provider, "google")),
     })
 
     return NextResponse.json({
@@ -48,7 +58,7 @@ export async function PATCH(request: Request) {
     if (action === "update-name") {
       const { name } = body
       if (!name || name.length < 2) return NextResponse.json({ error: "Name must be at least 2 characters" }, { status: 400 })
-      await prisma.user.update({ where: { id: session.user.id }, data: { name } })
+      await db.update(users).set({ name }).where(eq(users.id, session.user.id))
       return NextResponse.json({ message: "Name updated" })
     }
 
@@ -56,7 +66,9 @@ export async function PATCH(request: Request) {
       const { currentPassword, newPassword } = body
       if (!newPassword || newPassword.length < 6) return NextResponse.json({ error: "New password must be at least 6 characters" }, { status: 400 })
 
-      const user = await prisma.user.findUnique({ where: { id: session.user.id } })
+      const user = await db.query.users.findFirst({
+        where: eq(users.id, session.user.id),
+      })
       if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 })
 
       // If user has a password, verify current one
@@ -67,20 +79,20 @@ export async function PATCH(request: Request) {
       }
 
       const hashed = hashPassword(newPassword)
-      await prisma.user.update({ where: { id: session.user.id }, data: { hashedPassword: hashed } })
+      await db.update(users).set({ hashedPassword: hashed }).where(eq(users.id, session.user.id))
       return NextResponse.json({ message: "Password updated" })
     }
 
     if (action === "update-socials") {
       const { telegramId, twitterHandle, discordId } = body
-      await prisma.user.update({
-        where: { id: session.user.id },
-        data: {
+      await db
+        .update(users)
+        .set({
           telegramId: telegramId || null,
           twitterHandle: twitterHandle || null,
           discordId: discordId || null,
-        },
-      })
+        })
+        .where(eq(users.id, session.user.id))
       return NextResponse.json({ message: "Socials updated" })
     }
 

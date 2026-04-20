@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/auth"
-import { prisma } from "@/lib/prisma"
+import { db, instances, eq } from "@/db"
 import { decryptSecret } from "@/lib/crypto-secret"
 
 export async function GET(
@@ -13,7 +13,9 @@ export async function GET(
   }
 
   const { instanceId } = await params
-  const instance = await prisma.instance.findUnique({ where: { id: instanceId } })
+  const instance = await db.query.instances.findFirst({
+    where: eq(instances.id, instanceId),
+  })
   if (!instance) {
     return NextResponse.json({ error: "Instance not found" }, { status: 404 })
   }

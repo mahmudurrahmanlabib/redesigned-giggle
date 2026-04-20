@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
-import { prisma } from "@/lib/prisma"
 import { auth } from "@/auth"
+import { db, eq, desc, subscriptions } from "@/db"
 
 export async function GET() {
   try {
@@ -11,16 +11,16 @@ export async function GET() {
 
     const userId = session.user.id as string
 
-    const subscriptions = await prisma.subscription.findMany({
-      where: { userId },
-      include: {
+    const rows = await db.query.subscriptions.findMany({
+      where: eq(subscriptions.userId, userId),
+      with: {
         plan: true,
-        instance: { include: { serverConfig: true, region: true } },
+        instance: { with: { serverConfig: true, region: true } },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: desc(subscriptions.createdAt),
     })
 
-    return NextResponse.json(subscriptions)
+    return NextResponse.json(rows)
   } catch (error) {
     console.error("Failed to fetch subscriptions:", error)
     return NextResponse.json(

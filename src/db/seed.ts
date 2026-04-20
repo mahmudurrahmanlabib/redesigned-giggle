@@ -1,4 +1,4 @@
-// Seed — same upserts as the old prisma/seed.ts, using Drizzle's
+// Seed — upserts for regions, server configs, plans, and admin user using Drizzle's
 // onConflictDoUpdate. Run with `npm run db:seed`.
 
 import { hashSync } from "bcryptjs"

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { auth } from "@/auth"
-import { prisma } from "@/lib/prisma"
+import { db, eq, desc, subscriptions } from "@/db"
 
 export async function GET() {
   const session = await auth()
@@ -8,16 +8,16 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const subscriptions = await prisma.subscription.findMany({
-    where: { userId: session.user.id },
-    include: {
+  const rows = await db.query.subscriptions.findMany({
+    where: eq(subscriptions.userId, session.user.id),
+    with: {
       plan: true,
       instance: {
-        include: { serverConfig: true, region: true },
+        with: { serverConfig: true, region: true },
       },
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: desc(subscriptions.createdAt),
   })
 
-  return NextResponse.json(subscriptions)
+  return NextResponse.json(rows)
 }

@@ -3,7 +3,14 @@
 // The webhook is the SINGLE SOURCE OF TRUTH for Instance status transitions.
 
 import type Stripe from "stripe"
-import { prisma } from "@/lib/prisma"
+import {
+  db,
+  instances,
+  instanceLogs,
+  plans,
+  subscriptions,
+  eq,
+} from "@/db"
 import { provisionBot } from "@/lib/provisioner"
 import { grantCredits } from "@/lib/credits"
 
@@ -27,15 +34,17 @@ export async function handleCheckoutSessionCompleted(
     return
   }
 
-  const instance = await prisma.instance.findUnique({ where: { id: instanceId } })
+  const instance = await db.query.instances.findFirst({
+    where: eq(instances.id, instanceId),
+  })
   if (!instance) {
     console.warn(`[stripe] Instance ${instanceId} not found`)
     return
   }
 
   const plan = metadata.planSlug
-    ? await prisma.plan.findUnique({ where: { slug: metadata.planSlug } })
-    : await prisma.plan.findFirst({ where: { tier: "starter" } })
+    ? await db.query.plans.findFirst({ where: eq(plans.slug, metadata.planSlug) })
+    : await db.query.plans.findFirst({ where: eq(plans.tier, "starter") })
 
   if (!plan) {
     console.warn("[stripe] No plan found for checkout session")
@@ -48,59 +57,63 @@ export async function handleCheckoutSessionCompleted(
       : session.subscription?.id ?? null
 
   // Stamp the subscription id first so downstream provisioning has a record.
-  await prisma.instance.update({
-    where: { id: instanceId },
-    data: {
-      stripeSubscriptionId: stripeSubscriptionId ?? undefined,
-    },
-  })
+  if (stripeSubscriptionId) {
+    await db
+      .update(instances)
+      .set({ stripeSubscriptionId })
+      .where(eq(instances.id, instanceId))
+  }
 
   // Real provision. In mock mode (no LINODE_API_TOKEN) this falls back to
   // assigning a mock IP and flipping status=running, preserving dev behavior.
   try {
-    const fresh = await prisma.instance.findUnique({ where: { id: instanceId } })
+    const fresh = await db.query.instances.findFirst({
+      where: eq(instances.id, instanceId),
+    })
     if (fresh) {
       await provisionBot(fresh)
     }
   } catch (err) {
     console.error(`[stripe] provisionBot failed for ${instanceId}:`, err)
-    await prisma.instance.update({
-      where: { id: instanceId },
-      data: { status: "failed" },
-    })
-    await prisma.instanceLog.create({
-      data: {
-        instanceId,
-        level: "error",
-        message: `Provisioning failed after payment: ${err instanceof Error ? err.message : String(err)}`,
-      },
+    await db
+      .update(instances)
+      .set({ status: "failed" })
+      .where(eq(instances.id, instanceId))
+    await db.insert(instanceLogs).values({
+      instanceId,
+      level: "error",
+      message: `Provisioning failed after payment: ${err instanceof Error ? err.message : String(err)}`,
     })
   }
 
   // Create the Subscription row, linked 1:1 to the instance.
-  await prisma.subscription.upsert({
-    where: { instanceId },
-    update: {
-      stripeSubscriptionId: stripeSubscriptionId ?? undefined,
-      status: "active",
-      interval: metadata.interval ?? "month",
-    },
-    create: {
+  const existingSub = await db.query.subscriptions.findFirst({
+    where: eq(subscriptions.instanceId, instanceId),
+  })
+  if (existingSub) {
+    await db
+      .update(subscriptions)
+      .set({
+        stripeSubscriptionId: stripeSubscriptionId ?? undefined,
+        status: "active",
+        interval: metadata.interval ?? "month",
+      })
+      .where(eq(subscriptions.id, existingSub.id))
+  } else {
+    await db.insert(subscriptions).values({
       userId: instance.userId,
       planId: plan.id,
       instanceId,
       stripeSubscriptionId: stripeSubscriptionId ?? undefined,
       interval: metadata.interval ?? "month",
       status: "active",
-    },
-  })
+    })
+  }
 
-  await prisma.instanceLog.create({
-    data: {
-      instanceId,
-      level: "info",
-      message: "Deployment provisioned via Stripe checkout. Status: running.",
-    },
+  await db.insert(instanceLogs).values({
+    instanceId,
+    level: "info",
+    message: "Deployment provisioned via Stripe checkout. Status: running.",
   })
 }
 
@@ -109,18 +122,18 @@ export async function handleCheckoutSessionCompleted(
 export async function handleSubscriptionUpdated(
   sub: Stripe.Subscription
 ): Promise<void> {
-  const local = await prisma.subscription.findFirst({
-    where: { stripeSubscriptionId: sub.id },
+  const local = await db.query.subscriptions.findFirst({
+    where: eq(subscriptions.stripeSubscriptionId, sub.id),
   })
   if (!local) return
-  await prisma.subscription.update({
-    where: { id: local.id },
-    data: {
+  await db
+    .update(subscriptions)
+    .set({
       status: sub.status,
       currentPeriodEnd: new Date(sub.current_period_end * 1000),
       cancelAtPeriodEnd: sub.cancel_at_period_end,
-    },
-  })
+    })
+    .where(eq(subscriptions.id, local.id))
 }
 
 // ---------- customer.subscription.deleted ----------
@@ -128,26 +141,24 @@ export async function handleSubscriptionUpdated(
 export async function handleSubscriptionDeleted(
   sub: Stripe.Subscription
 ): Promise<void> {
-  const local = await prisma.subscription.findFirst({
-    where: { stripeSubscriptionId: sub.id },
-    include: { instance: true },
+  const local = await db.query.subscriptions.findFirst({
+    where: eq(subscriptions.stripeSubscriptionId, sub.id),
+    with: { instance: true },
   })
   if (!local) return
-  await prisma.subscription.update({
-    where: { id: local.id },
-    data: { status: "canceled" },
-  })
+  await db
+    .update(subscriptions)
+    .set({ status: "canceled" })
+    .where(eq(subscriptions.id, local.id))
   if (local.instance) {
-    await prisma.instance.update({
-      where: { id: local.instance.id },
-      data: { status: "stopped" },
-    })
-    await prisma.instanceLog.create({
-      data: {
-        instanceId: local.instance.id,
-        level: "warn",
-        message: "Subscription canceled. Instance stopped.",
-      },
+    await db
+      .update(instances)
+      .set({ status: "stopped" })
+      .where(eq(instances.id, local.instance.id))
+    await db.insert(instanceLogs).values({
+      instanceId: local.instance.id,
+      level: "warn",
+      message: "Subscription canceled. Instance stopped.",
     })
   }
 }
@@ -160,15 +171,15 @@ export async function handleInvoicePaid(invoice: Stripe.Invoice): Promise<void> 
       ? invoice.subscription
       : invoice.subscription?.id
   if (!subId) return
-  const local = await prisma.subscription.findFirst({
-    where: { stripeSubscriptionId: subId },
-    include: { plan: true },
+  const local = await db.query.subscriptions.findFirst({
+    where: eq(subscriptions.stripeSubscriptionId, subId),
+    with: { plan: true },
   })
   if (!local) return
-  await prisma.subscription.update({
-    where: { id: local.id },
-    data: { status: "active" },
-  })
+  await db
+    .update(subscriptions)
+    .set({ status: "active" })
+    .where(eq(subscriptions.id, local.id))
 
   // Grant monthly credits for the renewal period.
   const credits = local.plan?.creditsPerPeriod ?? 0
@@ -196,22 +207,20 @@ export async function handleInvoicePaymentFailed(
       ? invoice.subscription
       : invoice.subscription?.id
   if (!subId) return
-  const local = await prisma.subscription.findFirst({
-    where: { stripeSubscriptionId: subId },
-    include: { instance: true },
+  const local = await db.query.subscriptions.findFirst({
+    where: eq(subscriptions.stripeSubscriptionId, subId),
+    with: { instance: true },
   })
   if (!local) return
-  await prisma.subscription.update({
-    where: { id: local.id },
-    data: { status: "past_due" },
-  })
+  await db
+    .update(subscriptions)
+    .set({ status: "past_due" })
+    .where(eq(subscriptions.id, local.id))
   if (local.instance) {
-    await prisma.instanceLog.create({
-      data: {
-        instanceId: local.instance.id,
-        level: "error",
-        message: "Payment failed. Subscription marked past_due.",
-      },
+    await db.insert(instanceLogs).values({
+      instanceId: local.instance.id,
+      level: "error",
+      message: "Payment failed. Subscription marked past_due.",
     })
   }
 }

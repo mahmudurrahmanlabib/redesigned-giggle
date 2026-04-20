@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { auth } from "@/auth"
-import { prisma } from "@/lib/prisma"
+import { db, instances, eq, desc } from "@/db"
 
 export async function GET() {
   const session = await auth()
@@ -10,15 +10,18 @@ export async function GET() {
 
   const isAdmin = (session.user as { role?: string }).role === "admin"
 
-  const instances = await prisma.instance.findMany({
-    where: isAdmin ? {} : { userId: session.user.id },
-    include: {
+  const rows = await db.query.instances.findMany({
+    where: isAdmin ? undefined : eq(instances.userId, session.user.id),
+    with: {
       region: true,
       serverConfig: true,
-      logs: { take: 5, orderBy: { createdAt: "desc" } },
+      logs: {
+        orderBy: (logs, { desc: d }) => d(logs.createdAt),
+        limit: 5,
+      },
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: desc(instances.createdAt),
   })
 
-  return NextResponse.json(instances)
+  return NextResponse.json(rows)
 }

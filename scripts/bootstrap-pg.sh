@@ -4,14 +4,14 @@
 # Creates/aligns the `sovereignml` role + database, writes .env with a
 # matching DATABASE_URL (and an AUTH_SECRET if missing), verifies
 # pg_hba.conf allows password auth on 127.0.0.1, runs a smoke test,
-# and syncs the Prisma schema.
+# and syncs the Drizzle schema via drizzle-kit push.
 #
 # Re-runnable: if .env already has a working DATABASE_URL, the existing
 # password is preserved and only missing pieces are filled in.
 #
 # Usage:
 #   bash scripts/bootstrap-pg.sh
-#   DB_SEED=1 bash scripts/bootstrap-pg.sh    # also runs prisma seed
+#   DB_SEED=1 bash scripts/bootstrap-pg.sh    # also runs the seed
 
 set -euo pipefail
 
@@ -162,9 +162,19 @@ if [ ! -f src/db/schema.ts ]; then
   die "src/db/schema.ts not found. Check out a commit that has it."
 fi
 # --force pushes without interactive prompts; schema is source of truth.
-if ! node --env-file=.env node_modules/drizzle-kit/bin.cjs push --force; then
-  die "drizzle-kit push failed. Check the output above. Common causes: role lacks CREATE on the database, or DATABASE_URL points at the wrong host."
+# drizzle-kit has a habit of exiting 0 even when Postgres rejects one of
+# its ALTER statements, so we capture output and grep for "error:" in
+# addition to checking the exit code.
+PUSH_LOG="$(mktemp)"
+set +e
+node --env-file=.env node_modules/drizzle-kit/bin.cjs push --force 2>&1 | tee "$PUSH_LOG"
+PUSH_EXIT=${PIPESTATUS[0]}
+set -e
+if [ "$PUSH_EXIT" -ne 0 ] || grep -qE '^(error:|ERROR:)' "$PUSH_LOG"; then
+  rm -f "$PUSH_LOG"
+  die "drizzle-kit push failed. See the error above. If it says 'multiple primary keys', your database has a Prisma-era schema — wipe and retry: sudo -u postgres psql -c 'DROP DATABASE ${DB_NAME} WITH (FORCE);' && bash scripts/bootstrap-pg.sh"
 fi
+rm -f "$PUSH_LOG"
 
 if [ "${DB_SEED:-0}" = "1" ]; then
   log "Seeding (DB_SEED=1)..."
@@ -181,7 +191,7 @@ cat <<DONE
   Bootstrap complete.
 
   DATABASE_URL → written to .env
-  Schema       → synced via prisma db push
+  Schema       → synced via drizzle-kit push
 
   Next:
     pm2 start deploy/pm2.config.cjs

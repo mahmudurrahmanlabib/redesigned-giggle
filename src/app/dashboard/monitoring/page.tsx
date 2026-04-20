@@ -1,5 +1,5 @@
 import { auth } from "@/auth"
-import { prisma } from "@/lib/prisma"
+import { db, eq, not, instances } from "@/db"
 import { redirect } from "next/navigation"
 import Link from "next/link"
 
@@ -15,10 +15,12 @@ export default async function MonitoringPage() {
   const session = await auth()
   if (!session?.user?.id) redirect("/login")
 
-  const instances = await prisma.instance.findMany({
-    where: { userId: session.user.id, status: { not: "deleted" } },
-    orderBy: { createdAt: "desc" },
+  const rows = await db.query.instances.findMany({
+    where: eq(instances.userId, session.user.id),
+    orderBy: (t, { desc }) => desc(t.createdAt),
   })
+
+  const visibleInstances = rows.filter((i) => i.status !== "deleted")
 
   return (
     <div className="space-y-8 max-w-6xl">
@@ -35,10 +37,10 @@ export default async function MonitoringPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StatCard label="Total Agents" value={instances.length.toString()} />
+        <StatCard label="Total Agents" value={visibleInstances.length.toString()} />
         <StatCard
           label="Running"
-          value={instances.filter((i) => i.status === "running").length.toString()}
+          value={visibleInstances.filter((i) => i.status === "running").length.toString()}
           accent
         />
         <StatCard label="Incidents 24h" value="0" />
@@ -49,7 +51,7 @@ export default async function MonitoringPage() {
         <p className="text-[10px] text-[var(--text-secondary)] uppercase tracking-[0.1em] font-mono mb-4">
           Per-agent status
         </p>
-        {instances.length === 0 ? (
+        {visibleInstances.length === 0 ? (
           <p className="text-sm text-[var(--text-secondary)]">
             No agents deployed yet.{" "}
             <Link href="/dashboard/deploy" className="text-[var(--accent-color)] hover:underline">
@@ -70,7 +72,7 @@ export default async function MonitoringPage() {
               </tr>
             </thead>
             <tbody>
-              {instances.map((i, idx) => (
+              {visibleInstances.map((i, idx) => (
                 <tr
                   key={i.id}
                   className="border-b border-[var(--border-color)]/50 hover:bg-[var(--accent-dim)]/20 transition-colors"

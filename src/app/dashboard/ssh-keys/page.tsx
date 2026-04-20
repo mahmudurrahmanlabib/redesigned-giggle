@@ -1,14 +1,14 @@
 import { auth } from "@/auth"
-import { prisma } from "@/lib/prisma"
+import { db, eq, desc, sshKeys } from "@/db"
 import { redirect } from "next/navigation"
 
 export default async function SshKeysPage() {
   const session = await auth()
   if (!session?.user?.id) redirect("/login")
 
-  const keys = await prisma.sshKey.findMany({
-    where: { userId: session.user.id },
-    orderBy: { createdAt: "desc" },
+  const keys = await db.query.sshKeys.findMany({
+    where: eq(sshKeys.userId, session.user.id),
+    orderBy: desc(sshKeys.createdAt),
   })
 
   return (

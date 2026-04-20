@@ -13,11 +13,7 @@
     "db:push": "node --env-file=.env node_modules/drizzle-kit/bin.cjs push",
     "db:seed": "node --env-file=.env --import tsx src/db/seed.ts",
     "db:studio": "node --env-file=.env node_modules/drizzle-kit/bin.cjs studio",
-    "bot-runtime:build": "docker build -t sovereign-bot-runtime:dev bot-runtime",
-    "docker:dev": "docker compose up -d postgres",
-    "docker:up": "docker compose up -d --build",
-    "docker:down": "docker compose down",
-    "docker:logs": "docker compose logs -f app"
+    "bot-runtime:build": "docker build -t sovereign-bot-runtime:dev bot-runtime"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.10.0",

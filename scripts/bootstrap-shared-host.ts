@@ -6,7 +6,7 @@
  * it ensures the StackScript, creates a g6-standard-2 in us-east, polls until
  * SSH is reachable and Docker is up, then inserts a BotHost row.
  *
- * Usage: pnpm bootstrap:host
+ * Usage: npm run bootstrap:host
  *
  * Env required:
  *   - LINODE_API_TOKEN        linode account token
@@ -16,7 +16,8 @@
  */
 import "dotenv/config"
 import { randomBytes } from "node:crypto"
-import { prisma } from "../src/lib/prisma"
+import { db, eq, botHosts, instances, sql } from "../src/db"
+import { pool } from "../src/db"
 import {
   ensureSharedHostStackScript,
   linodeCreateVM,
@@ -53,7 +54,6 @@ async function pollUntil<T>(
       const result = await fn()
       if (result) return result
     } catch (err) {
-      // swallow and retry
       if (attempt % 5 === 0) {
         console.log(`  … still waiting on ${opts.label} (attempt ${attempt}): ${err instanceof Error ? err.message : String(err)}`)
       }
@@ -68,15 +68,19 @@ async function main(): Promise<void> {
   requireEnv("SSH_FLEET_PRIVATE_KEY")
   const publicKey = requireEnv("SSH_FLEET_PUBLIC_KEY")
 
-  // Idempotency guard — if we already have a ready host in this region with
-  // room, we're done.
-  const existing = await prisma.botHost.findMany({
-    where: { region: TARGET_REGION, status: "ready" },
-    include: { _count: { select: { instances: true } } },
-  })
-  const withCapacity = existing.find((h) => h._count.instances < h.capacity)
+  const existing = await db
+    .select({
+      id: botHosts.id,
+      ipAddress: botHosts.ipAddress,
+      capacity: botHosts.capacity,
+      instanceCount: sql<number>`(select count(*) from "Instance" where "botHostId" = ${botHosts.id})`,
+    })
+    .from(botHosts)
+    .where(eq(botHosts.region, TARGET_REGION))
+
+  const withCapacity = existing.find((h) => Number(h.instanceCount) < h.capacity)
   if (withCapacity) {
-    console.log(`✓ BotHost ${withCapacity.id} already ready at ${withCapacity.ipAddress} (${withCapacity._count.instances}/${withCapacity.capacity} used) — nothing to do`)
+    console.log(`✓ BotHost ${withCapacity.id} already ready at ${withCapacity.ipAddress} (${withCapacity.instanceCount}/${withCapacity.capacity} used) — nothing to do`)
     return
   }
 
@@ -125,8 +129,9 @@ async function main(): Promise<void> {
     { timeoutMs: 10 * 60_000, intervalMs: 10_000, label: "ssh+docker" }
   )
 
-  const botHost = await prisma.botHost.create({
-    data: {
+  const [botHost] = await db
+    .insert(botHosts)
+    .values({
       label,
       linodeId: vm.id,
       ipAddress: ip,
@@ -134,8 +139,8 @@ async function main(): Promise<void> {
       plan: TARGET_PLAN,
       capacity: DEFAULT_CAPACITY,
       status: "ready",
-    },
-  })
+    })
+    .returning()
   console.log(`✓ BotHost ${botHost.id} ready at ${ip}`)
 }
 
@@ -145,5 +150,5 @@ main()
     process.exit(1)
   })
   .finally(async () => {
-    await prisma.$disconnect()
+    await pool.end()
   })

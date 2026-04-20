@@ -1,5 +1,5 @@
 import { auth } from "@/auth"
-import { prisma } from "@/lib/prisma"
+import { db, eq, desc, subscriptions } from "@/db"
 import { redirect } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 
@@ -14,16 +14,16 @@ export default async function BillingPage() {
   const session = await auth()
   if (!session?.user?.id) redirect("/login")
 
-  const subscriptions = await prisma.subscription.findMany({
-    where: { userId: session.user.id },
-    include: {
+  const rows = await db.query.subscriptions.findMany({
+    where: eq(subscriptions.userId, session.user.id),
+    with: {
       plan: true,
-      instance: { include: { serverConfig: true, region: true } },
+      instance: { with: { serverConfig: true, region: true } },
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: desc(subscriptions.createdAt),
   })
 
-  const totalMonthly = subscriptions
+  const totalMonthly = rows
     .filter((s) => s.status === "active" && s.instance)
     .reduce((sum, s) => {
       if (!s.instance) return sum
@@ -58,7 +58,7 @@ export default async function BillingPage() {
             Active Subscriptions
           </p>
           <p className="text-3xl font-bold mt-2 text-[var(--accent-color)]" style={{ fontFamily: "var(--font-display)" }}>
-            {subscriptions.filter(s => s.status === "active").length}
+            {rows.filter(s => s.status === "active").length}
           </p>
         </div>
       </div>
@@ -70,13 +70,13 @@ export default async function BillingPage() {
         >
           Subscriptions
         </h2>
-        {subscriptions.length === 0 ? (
+        {rows.length === 0 ? (
           <div className="border border-[var(--border-color)] bg-[var(--card-bg)] p-8 text-center">
             <p className="text-[var(--text-secondary)]">No subscriptions yet. Deploy an instance to get started.</p>
           </div>
         ) : (
           <div className="space-y-0">
-            {subscriptions.map((sub) => (
+            {rows.map((sub) => (
               <div key={sub.id} className="border border-[var(--border-color)] border-t-0 first:border-t bg-[var(--card-bg)] p-5">
                 <div className="flex items-center justify-between">
                   <div>

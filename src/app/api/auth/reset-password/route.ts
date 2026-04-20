@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { prisma } from "@/lib/prisma"
+import { db, users, verificationTokens, eq, and } from "@/db"
 import { hashPassword } from "@/lib/password"
 import crypto from "crypto"
 
@@ -17,11 +17,11 @@ export async function POST(request: Request) {
     // Hash the incoming token to compare with stored hash
     const hashedToken = crypto.createHash("sha256").update(token).digest("hex")
 
-    const storedToken = await prisma.verificationToken.findFirst({
-      where: {
-        identifier: email.toLowerCase(),
-        token: hashedToken,
-      },
+    const storedToken = await db.query.verificationTokens.findFirst({
+      where: and(
+        eq(verificationTokens.identifier, email.toLowerCase()),
+        eq(verificationTokens.token, hashedToken),
+      ),
     })
 
     if (!storedToken) {
@@ -30,19 +30,25 @@ export async function POST(request: Request) {
 
     if (storedToken.expires < new Date()) {
       // Clean up expired token
-      await prisma.verificationToken.delete({ where: { identifier_token: { identifier: storedToken.identifier, token: storedToken.token } } })
+      await db.delete(verificationTokens).where(and(
+        eq(verificationTokens.identifier, storedToken.identifier),
+        eq(verificationTokens.token, storedToken.token),
+      ))
       return NextResponse.json({ error: "Reset link has expired. Please request a new one." }, { status: 400 })
     }
 
     // Update password
-    const hashedPassword = hashPassword(password)
-    await prisma.user.update({
-      where: { email: email.toLowerCase() },
-      data: { hashedPassword },
-    })
+    const hashed = hashPassword(password)
+    await db
+      .update(users)
+      .set({ hashedPassword: hashed })
+      .where(eq(users.email, email.toLowerCase()))
 
     // Delete used token
-    await prisma.verificationToken.delete({ where: { identifier_token: { identifier: storedToken.identifier, token: storedToken.token } } })
+    await db.delete(verificationTokens).where(and(
+      eq(verificationTokens.identifier, storedToken.identifier),
+      eq(verificationTokens.token, storedToken.token),
+    ))
 
     return NextResponse.json({ message: "Password reset successfully" })
   } catch (error) {

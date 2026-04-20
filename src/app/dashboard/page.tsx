@@ -1,5 +1,5 @@
 import { auth } from "@/auth"
-import { prisma } from "@/lib/prisma"
+import { db, eq, and, gte, sql, instances, subscriptions, users, usageEvents, instanceLogs } from "@/db"
 import { redirect } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import Link from "next/link"
@@ -19,43 +19,45 @@ export default async function DashboardPage() {
   const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
   const since24 = new Date(Date.now() - 24 * 60 * 60 * 1000)
 
-  const [instances, subscriptions, user, usage30, incidents24] = await Promise.all([
-    prisma.instance.findMany({
-      where: { userId: session.user.id },
-      include: { region: true, serverConfig: true },
-      orderBy: { createdAt: "desc" },
+  const [allInstances, allSubscriptions, user, usage30Rows, incidents24Rows] = await Promise.all([
+    db.query.instances.findMany({
+      where: eq(instances.userId, session.user.id),
+      with: { region: true, serverConfig: true },
+      orderBy: (t, { desc }) => desc(t.createdAt),
     }),
-    prisma.subscription.findMany({
-      where: { userId: session.user.id },
-      include: { plan: true },
+    db.query.subscriptions.findMany({
+      where: eq(subscriptions.userId, session.user.id),
+      with: { plan: true },
     }),
-    prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { credits: true },
+    db.query.users.findFirst({
+      where: eq(users.id, session.user.id),
+      columns: { credits: true },
     }),
-    prisma.usageEvent.aggregate({
-      where: { userId: session.user.id, createdAt: { gte: since30 } },
-      _sum: { amount: true },
-    }),
-    prisma.instanceLog.count({
-      where: {
-        instance: { userId: session.user.id },
-        level: "error",
-        createdAt: { gte: since24 },
-      },
-    }),
+    db
+      .select({ total: sql<number>`coalesce(sum(${usageEvents.amount}), 0)` })
+      .from(usageEvents)
+      .where(and(eq(usageEvents.userId, session.user.id), gte(usageEvents.createdAt, since30))),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(instanceLogs)
+      .innerJoin(instances, eq(instanceLogs.instanceId, instances.id))
+      .where(
+        and(
+          eq(instances.userId, session.user.id),
+          eq(instanceLogs.level, "error"),
+          gte(instanceLogs.createdAt, since24)
+        )
+      ),
   ])
 
-  const activeInstances = instances.filter((i) => i.status === "running").length
-  const activeSubs = subscriptions.filter((s) => s.status === "active").length
-  // Monthly run-rate from currently-running instances' server configs. Cheaper
-  // than reconstructing Stripe line items, and matches what the user sees in
-  // the deploy wizard.
-  const monthlySpend = instances
+  const activeInstances = allInstances.filter((i) => i.status === "running").length
+  const activeSubs = allSubscriptions.filter((s) => s.status === "active").length
+  const monthlySpend = allInstances
     .filter((i) => i.status === "running")
     .reduce((sum, i) => sum + (i.serverConfig?.priceMonthly ?? 0), 0)
   const credits = user?.credits ?? 0
-  const usageTotal = usage30._sum.amount ?? 0
+  const usageTotal = Number(usage30Rows[0]?.total ?? 0)
+  const incidents24 = Number(incidents24Rows[0]?.count ?? 0)
 
   return (
     <div className="space-y-8 max-w-5xl">
@@ -76,7 +78,7 @@ export default async function DashboardPage() {
 
       <div className="grid gap-0 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          { label: "Active Agents", value: activeInstances.toString(), accent: true, hint: `of ${instances.length} total` },
+          { label: "Active Agents", value: activeInstances.toString(), accent: true, hint: `of ${allInstances.length} total` },
           { label: "Credits Remaining", value: credits.toLocaleString(), accent: false, hint: `${usageTotal.toLocaleString()} used last 30d` },
           { label: "Monthly Spend", value: `$${monthlySpend.toFixed(2)}`, accent: false, hint: `across ${activeSubs} sub${activeSubs === 1 ? "" : "s"}` },
           { label: "Incidents 24h", value: incidents24.toString(), accent: false, hint: incidents24 === 0 ? "all systems up" : "check monitoring" },
@@ -132,7 +134,7 @@ export default async function DashboardPage() {
         >
           Your Agents
         </h2>
-        {instances.length === 0 ? (
+        {allInstances.length === 0 ? (
           <div className="border border-[var(--border-color)] bg-[var(--card-bg)] p-12 text-center">
             <p className="text-[var(--text-secondary)] mb-4">No agents deployed yet. Launch your first AI agent.</p>
             <Link href="/dashboard/deploy" className="btn-primary inline-flex text-sm px-6 py-3">
@@ -141,7 +143,7 @@ export default async function DashboardPage() {
           </div>
         ) : (
           <div className="space-y-0">
-            {instances.map((instance) => (
+            {allInstances.map((instance) => (
               <Link
                 key={instance.id}
                 href={`/dashboard/instances/${instance.id}`}

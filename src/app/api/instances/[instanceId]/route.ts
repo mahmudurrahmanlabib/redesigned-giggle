@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/auth"
-import { prisma } from "@/lib/prisma"
+import { db, instances, instanceLogs, subscriptions, eq } from "@/db"
 import { deleteBot } from "@/lib/provisioner"
 import { stripe, isStripeConfigured } from "@/lib/stripe"
 
@@ -21,7 +21,9 @@ export async function DELETE(
   const { instanceId } = await params
   const isAdmin = (session.user as { role?: string }).role === "admin"
 
-  const instance = await prisma.instance.findUnique({ where: { id: instanceId } })
+  const instance = await db.query.instances.findFirst({
+    where: eq(instances.id, instanceId),
+  })
   if (!instance) {
     return NextResponse.json({ error: "Instance not found" }, { status: 404 })
   }
@@ -35,15 +37,15 @@ export async function DELETE(
     console.error(`[instance DELETE] provisioner cleanup failed for ${instanceId}:`, err)
   }
 
-  await prisma.instanceLog.create({
-    data: {
-      instanceId,
-      level: "warn",
-      message: `Instance deleted by ${isAdmin ? "admin" : "user"}.`,
-    },
+  await db.insert(instanceLogs).values({
+    instanceId,
+    level: "warn",
+    message: `Instance deleted by ${isAdmin ? "admin" : "user"}.`,
   })
 
-  const sub = await prisma.subscription.findFirst({ where: { instanceId } })
+  const sub = await db.query.subscriptions.findFirst({
+    where: eq(subscriptions.instanceId, instanceId),
+  })
   if (sub) {
     if (isStripeConfigured() && sub.stripeSubscriptionId) {
       try {
@@ -52,10 +54,10 @@ export async function DELETE(
         console.warn(`[instance DELETE] stripe cancel failed:`, err)
       }
     }
-    await prisma.subscription.update({
-      where: { id: sub.id },
-      data: { status: "canceled" },
-    })
+    await db
+      .update(subscriptions)
+      .set({ status: "canceled" })
+      .where(eq(subscriptions.id, sub.id))
   }
 
   return NextResponse.json({ success: true })

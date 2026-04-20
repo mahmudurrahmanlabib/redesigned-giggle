@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma"
+import { db, desc, instances } from "@/db"
 import { Badge } from "@/components/ui/badge"
 
 const STATUS_STYLES: Record<string, string> = {
@@ -10,9 +10,9 @@ const STATUS_STYLES: Record<string, string> = {
 }
 
 export default async function AdminInstancesPage() {
-  const instances = await prisma.instance.findMany({
-    include: { user: true, region: true, serverConfig: true },
-    orderBy: { createdAt: "desc" },
+  const rows = await db.query.instances.findMany({
+    with: { user: true, region: true, serverConfig: true },
+    orderBy: desc(instances.createdAt),
   })
 
   return (
@@ -22,13 +22,13 @@ export default async function AdminInstancesPage() {
         <p className="text-zinc-400 mt-1">Manage all deployed OpenClaw instances across users.</p>
       </div>
 
-      {instances.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="bg-white/5 border border-white/10 rounded-xl p-8 text-center">
           <p className="text-zinc-400">No instances deployed yet.</p>
         </div>
       ) : (
         <div className="space-y-3">
-          {instances.map((instance) => (
+          {rows.map((instance) => (
             <div
               key={instance.id}
               className="bg-white/5 border border-white/10 rounded-xl p-5"

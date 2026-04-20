@@ -1,27 +1,34 @@
-import { prisma } from "@/lib/prisma"
+import { db, eq, sql, instances, users, subscriptions } from "@/db"
 import Link from "next/link"
 
 export default async function AdminDashboard() {
   const [
-    totalUsers,
-    activeInstances,
-    totalInstances,
-    activeSubscriptions,
-    stoppedInstances,
-    bannedUsers,
+    totalUsersRows,
+    activeInstancesRows,
+    totalInstancesRows,
+    activeSubscriptionsRows,
+    stoppedInstancesRows,
+    bannedUsersRows,
   ] = await Promise.all([
-    prisma.user.count({ where: { role: "user" } }),
-    prisma.instance.count({ where: { status: "running" } }),
-    prisma.instance.count(),
-    prisma.subscription.count({ where: { status: "active" } }),
-    prisma.instance.count({ where: { status: "stopped" } }),
-    prisma.user.count({ where: { isBanned: true } }),
+    db.select({ count: sql<number>`count(*)` }).from(users).where(eq(users.role, "user")),
+    db.select({ count: sql<number>`count(*)` }).from(instances).where(eq(instances.status, "running")),
+    db.select({ count: sql<number>`count(*)` }).from(instances),
+    db.select({ count: sql<number>`count(*)` }).from(subscriptions).where(eq(subscriptions.status, "active")),
+    db.select({ count: sql<number>`count(*)` }).from(instances).where(eq(instances.status, "stopped")),
+    db.select({ count: sql<number>`count(*)` }).from(users).where(eq(users.isBanned, true)),
   ])
 
-  const recentInstances = await prisma.instance.findMany({
-    include: { user: true, region: true, serverConfig: true },
-    orderBy: { createdAt: "desc" },
-    take: 10,
+  const totalUsers = Number(totalUsersRows[0]?.count ?? 0)
+  const activeInstances = Number(activeInstancesRows[0]?.count ?? 0)
+  const totalInstances = Number(totalInstancesRows[0]?.count ?? 0)
+  const activeSubscriptions = Number(activeSubscriptionsRows[0]?.count ?? 0)
+  const stoppedInstances = Number(stoppedInstancesRows[0]?.count ?? 0)
+  const bannedUsers = Number(bannedUsersRows[0]?.count ?? 0)
+
+  const recentInstances = await db.query.instances.findMany({
+    with: { user: true, region: true, serverConfig: true },
+    orderBy: (t, { desc }) => desc(t.createdAt),
+    limit: 10,
   })
 
   const stats = [

@@ -1,5 +1,5 @@
 import { auth } from "@/auth"
-import { prisma } from "@/lib/prisma"
+import { db, eq, and, instances } from "@/db"
 import { notFound, redirect } from "next/navigation"
 import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
@@ -26,12 +26,15 @@ export default async function InstanceDetailPage({
   const { id } = await params
   const { tab } = await searchParams
 
-  const instance = await prisma.instance.findFirst({
-    where: { id, userId: session.user.id },
-    include: {
+  const instance = await db.query.instances.findFirst({
+    where: and(eq(instances.id, id), eq(instances.userId, session.user.id)),
+    with: {
       region: true,
       serverConfig: true,
-      logs: { take: 20, orderBy: { createdAt: "desc" } },
+      logs: {
+        orderBy: (logs, { desc }) => desc(logs.createdAt),
+        limit: 20,
+      },
     },
   })
 
@@ -70,7 +73,6 @@ export default async function InstanceDetailPage({
         </div>
       </div>
 
-      {/* Access block — always visible at the top */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="border border-[var(--accent-color)]/30 bg-[var(--accent-dim)]/20 p-4">
           <p className="text-[10px] text-[var(--accent-color)] uppercase tracking-[0.1em] font-mono mb-2">

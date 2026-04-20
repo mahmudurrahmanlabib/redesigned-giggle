@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { prisma } from "@/lib/prisma"
+import { db, eq, instances } from "@/db"
 
 /**
  * Centralized Telegram webhook router. Telegram POSTs updates here; we look
@@ -15,9 +15,9 @@ export async function POST(
 ) {
   const { botToken } = await params
 
-  const instance = await prisma.instance.findUnique({
-    where: { botToken },
-    select: {
+  const instance = await db.query.instances.findFirst({
+    where: eq(instances.botToken, botToken),
+    columns: {
       id: true,
       status: true,
       ipAddress: true,
@@ -52,7 +52,6 @@ export async function POST(
         "x-bot-token": instance.botToken ?? "",
       },
       body: bodyText,
-      // Telegram retries on 5xx; don't let a slow bot turn into repeated deliveries.
       signal: AbortSignal.timeout(10_000),
     })
   } catch (err) {

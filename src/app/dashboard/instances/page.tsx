@@ -1,5 +1,5 @@
 import { auth } from "@/auth"
-import { prisma } from "@/lib/prisma"
+import { db, eq, desc, instances } from "@/db"
 import { redirect } from "next/navigation"
 import Link from "next/link"
 import { InstancesFilter } from "./instances-filter"
@@ -8,13 +8,20 @@ export default async function InstancesPage() {
   const session = await auth()
   if (!session?.user?.id) redirect("/login")
 
-  const instances = await prisma.instance.findMany({
-    where: { userId: session.user.id },
-    include: { region: true, serverConfig: true, logs: { take: 3, orderBy: { createdAt: "desc" } } },
-    orderBy: { createdAt: "desc" },
+  const rows = await db.query.instances.findMany({
+    where: eq(instances.userId, session.user.id),
+    with: {
+      region: true,
+      serverConfig: true,
+      logs: {
+        orderBy: (logs, { desc: d }) => d(logs.createdAt),
+        limit: 3,
+      },
+    },
+    orderBy: desc(instances.createdAt),
   })
 
-  const items = instances.map((i) => ({
+  const items = rows.map((i) => ({
     id: i.id,
     name: i.name,
     slug: i.slug,

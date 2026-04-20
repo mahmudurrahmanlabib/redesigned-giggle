@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma"
+import { db, users, creditLedger, eq, sql } from "@/db"
 
 export type ConsumeResult =
   | { ok: true; balance: number }
@@ -17,19 +17,20 @@ export async function grantCredits(
   if (amount <= 0) {
     throw new Error(`grantCredits requires a positive amount, got ${amount}`)
   }
-  return prisma.$transaction(async (tx) => {
-    const user = await tx.user.update({
-      where: { id: userId },
-      data: { credits: { increment: amount } },
-      select: { credits: true },
-    })
-    await tx.creditLedger.create({
-      data: {
-        userId,
-        delta: amount,
-        reason,
-        balance: user.credits,
-      },
+  return db.transaction(async (tx) => {
+    const [user] = await tx
+      .update(users)
+      .set({ credits: sql`${users.credits} + ${amount}` })
+      .where(eq(users.id, userId))
+      .returning({ credits: users.credits })
+    if (!user) {
+      throw new Error(`grantCredits: user ${userId} not found`)
+    }
+    await tx.insert(creditLedger).values({
+      userId,
+      delta: amount,
+      reason,
+      balance: user.credits,
     })
     return user.credits
   })
@@ -48,10 +49,10 @@ export async function consumeCredits(
   if (amount <= 0) {
     throw new Error(`consumeCredits requires a positive amount, got ${amount}`)
   }
-  return prisma.$transaction(async (tx) => {
-    const current = await tx.user.findUnique({
-      where: { id: userId },
-      select: { credits: true },
+  return db.transaction(async (tx) => {
+    const current = await tx.query.users.findFirst({
+      where: eq(users.id, userId),
+      columns: { credits: true },
     })
     if (!current) {
       throw new Error(`consumeCredits: user ${userId} not found`)
@@ -59,18 +60,19 @@ export async function consumeCredits(
     if (current.credits < amount) {
       return { ok: false as const, balance: current.credits }
     }
-    const updated = await tx.user.update({
-      where: { id: userId },
-      data: { credits: { decrement: amount } },
-      select: { credits: true },
-    })
-    await tx.creditLedger.create({
-      data: {
-        userId,
-        delta: -amount,
-        reason,
-        balance: updated.credits,
-      },
+    const [updated] = await tx
+      .update(users)
+      .set({ credits: sql`${users.credits} - ${amount}` })
+      .where(eq(users.id, userId))
+      .returning({ credits: users.credits })
+    if (!updated) {
+      throw new Error(`consumeCredits: user ${userId} not found`)
+    }
+    await tx.insert(creditLedger).values({
+      userId,
+      delta: -amount,
+      reason,
+      balance: updated.credits,
     })
     return { ok: true as const, balance: updated.credits }
   })
@@ -78,9 +80,9 @@ export async function consumeCredits(
 
 /** Read the current credit balance for a user. */
 export async function getBalance(userId: string): Promise<number> {
-  const row = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { credits: true },
+  const row = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+    columns: { credits: true },
   })
   return row?.credits ?? 0
 }

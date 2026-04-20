@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import dns from "node:dns"
 import { auth } from "@/auth"
-import { prisma } from "@/lib/prisma"
+import { db, instances, eq } from "@/db"
 
 type DnsStatus = "pending" | "propagating" | "ready" | "error"
 type TlsStatus = "pending" | "issued" | "failed"
@@ -16,7 +16,9 @@ export async function GET(
   }
 
   const { instanceId } = await params
-  const instance = await prisma.instance.findUnique({ where: { id: instanceId } })
+  const instance = await db.query.instances.findFirst({
+    where: eq(instances.id, instanceId),
+  })
   if (!instance) {
     return NextResponse.json({ error: "Instance not found" }, { status: 404 })
   }
@@ -64,10 +66,10 @@ export async function GET(
   }
 
   if (dnsStatus !== instance.dnsStatus || tlsStatus !== instance.tlsStatus) {
-    await prisma.instance.update({
-      where: { id: instance.id },
-      data: { dnsStatus, tlsStatus },
-    })
+    await db
+      .update(instances)
+      .set({ dnsStatus, tlsStatus })
+      .where(eq(instances.id, instance.id))
   }
 
   return NextResponse.json({

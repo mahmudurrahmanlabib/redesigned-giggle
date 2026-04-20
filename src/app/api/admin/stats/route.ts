@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { auth } from "@/auth"
-import { prisma } from "@/lib/prisma"
+import { db, users, instances, subscriptions, eq, sql } from "@/db"
 
 export async function GET() {
   const session = await auth()
@@ -11,20 +11,27 @@ export async function GET() {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
 
-  const [totalUsers, activeInstances, totalInstances, activeSubscriptions, bannedUsers] =
-    await Promise.all([
-      prisma.user.count({ where: { role: "user" } }),
-      prisma.instance.count({ where: { status: "running" } }),
-      prisma.instance.count(),
-      prisma.subscription.count({ where: { status: "active" } }),
-      prisma.user.count({ where: { isBanned: true } }),
-    ])
+  const countExpr = sql<number>`count(*)::int`
+
+  const [
+    totalUsersRows,
+    activeInstancesRows,
+    totalInstancesRows,
+    activeSubscriptionsRows,
+    bannedUsersRows,
+  ] = await Promise.all([
+    db.select({ count: countExpr }).from(users).where(eq(users.role, "user")),
+    db.select({ count: countExpr }).from(instances).where(eq(instances.status, "running")),
+    db.select({ count: countExpr }).from(instances),
+    db.select({ count: countExpr }).from(subscriptions).where(eq(subscriptions.status, "active")),
+    db.select({ count: countExpr }).from(users).where(eq(users.isBanned, true)),
+  ])
 
   return NextResponse.json({
-    totalUsers,
-    activeInstances,
-    totalInstances,
-    activeSubscriptions,
-    bannedUsers,
+    totalUsers: totalUsersRows[0]?.count ?? 0,
+    activeInstances: activeInstancesRows[0]?.count ?? 0,
+    totalInstances: totalInstancesRows[0]?.count ?? 0,
+    activeSubscriptions: activeSubscriptionsRows[0]?.count ?? 0,
+    bannedUsers: bannedUsersRows[0]?.count ?? 0,
   })
 }
