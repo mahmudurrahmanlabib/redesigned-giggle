@@ -2,8 +2,46 @@
 // the /api/checkout endpoint, so there's a single source of truth.
 
 import { STORAGE_PRICE_PER_GB_MONTH, type ServerTypeConfig } from "@/configs/server-types"
+import type { PlanConfig } from "@/configs/plans"
 
 export type BillingInterval = "month" | "year"
+
+// ── Plan-based pricing (customer-facing) ────────────────────────────
+
+export type PlanPriceBreakdown = {
+  planName: string
+  planSlug: string
+  price: number
+  interval: BillingInterval
+  yearlyDiscountApplied: boolean
+}
+
+export function calcPlanPrice(
+  plan: Pick<PlanConfig, "name" | "slug" | "displayPriceMonthly" | "displayPriceYearly">,
+  interval: BillingInterval,
+): PlanPriceBreakdown {
+  const isYearly = interval === "year"
+  return {
+    planName: plan.name,
+    planSlug: plan.slug,
+    price: isYearly ? plan.displayPriceYearly : plan.displayPriceMonthly,
+    interval,
+    yearlyDiscountApplied: isYearly,
+  }
+}
+
+/** Stripe unit_amount in cents for a plan checkout session */
+export function planUnitAmountCents(
+  plan: Pick<PlanConfig, "displayPriceMonthly" | "displayPriceYearly">,
+  interval: BillingInterval,
+): number {
+  const price = interval === "year"
+    ? plan.displayPriceYearly
+    : plan.displayPriceMonthly
+  return Math.round(price * 100)
+}
+
+// ── Internal cost pricing (server cost, not shown to customers) ─────
 
 export type PriceBreakdown = {
   serverPrice: number
@@ -30,7 +68,6 @@ export function calcInstancePrice({
     ? serverConfig.priceYearly
     : serverConfig.priceMonthly
 
-  // Storage is per-GB-month; multiply by 12 for yearly.
   const monthlyStorage = storageGb * STORAGE_PRICE_PER_GB_MONTH
   const storagePrice = isYearly ? monthlyStorage * 12 : monthlyStorage
 

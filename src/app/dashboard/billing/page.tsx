@@ -3,6 +3,7 @@ import { db, eq, desc, subscriptions } from "@/db"
 import { redirect } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { BillingPortalButton } from "./portal-button"
+import { findPlanBySlug } from "@/configs/plans"
 
 const STATUS_STYLES: Record<string, string> = {
   active: "bg-[var(--accent-dim)] text-[var(--accent-color)] border-[var(--accent-color)]/30",
@@ -27,10 +28,11 @@ export default async function BillingPage() {
   const totalMonthly = rows
     .filter((s) => s.status === "active" && s.instance && s.instance.status !== "deleted")
     .reduce((sum, s) => {
-      if (!s.instance) return sum
+      const cfg = findPlanBySlug(s.plan?.slug ?? "")
+      if (!cfg) return sum
       return sum + (s.interval === "year"
-        ? s.instance.serverConfig.priceYearly / 12
-        : s.instance.serverConfig.priceMonthly)
+        ? cfg.displayPriceYearly / 12
+        : cfg.displayPriceMonthly)
     }, 0)
 
   return (
@@ -102,18 +104,25 @@ export default async function BillingPage() {
                       )}
                     </p>
                   </div>
-                  {sub.instance && (
-                    <div className="text-right">
-                      <p className="text-[var(--text-primary)] font-bold" style={{ fontFamily: "var(--font-display)" }}>
-                        ${sub.interval === "year"
-                          ? sub.instance.serverConfig.priceYearly.toFixed(2)
-                          : sub.instance.serverConfig.priceMonthly.toFixed(2)}
-                        <span className="text-[var(--text-secondary)] text-sm font-normal">
-                          /{sub.interval === "year" ? "yr" : "mo"}
-                        </span>
-                      </p>
-                    </div>
-                  )}
+                  {(() => {
+                    const cfg = findPlanBySlug(sub.plan?.slug ?? "")
+                    if (!cfg) return null
+                    const price = sub.interval === "year"
+                      ? cfg.displayPriceYearly
+                      : cfg.displayPriceMonthly
+                    return (
+                      <div className="text-right">
+                        <p className="text-[var(--text-primary)] font-bold" style={{ fontFamily: "var(--font-display)" }}>
+                          {price === 0 ? "Free" : `$${price.toFixed(2)}`}
+                          {price > 0 && (
+                            <span className="text-[var(--text-secondary)] text-sm font-normal">
+                              /{sub.interval === "year" ? "yr" : "mo"}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    )
+                  })()}
                 </div>
               </div>
             ))}

@@ -4,7 +4,8 @@ import { auth } from "@/auth"
 import { db, eq, and, asc, instances, instanceLogs, regions, serverConfigs, sshKeys, users, plans, subscriptions } from "@/db"
 import { stripe, isStripeConfigured } from "@/lib/stripe"
 import { createSlug, encryptRootPassword, computeSshFingerprint, isValidPublicKey } from "@/lib/instance"
-import { calcInstancePrice } from "@/lib/pricing"
+import { planUnitAmountCents } from "@/lib/pricing"
+import { findPlanBySlug, type PlanConfig } from "@/configs/plans"
 import { BRANDING } from "@/configs/branding"
 import { parseAgentConfig } from "@/lib/agent-config"
 import { selectSkills } from "@/configs/skill-map"
@@ -13,6 +14,7 @@ import { routeModel } from "@/lib/model-router"
 import { provisionBot } from "@/lib/provisioner"
 import { describeLinodeError } from "@/lib/linode"
 import { isDomainVerified, recordName, expectedValue, getOrCreateVerification } from "@/lib/domain-verify"
+import { grantCredits } from "@/lib/credits"
 
 export async function POST(req: NextRequest) {
   const session = await auth()
@@ -23,20 +25,18 @@ export async function POST(req: NextRequest) {
   const body = await req.json()
   const {
     name,
+    planSlug = "builder",
     regionSlug,
-    serverConfigSlug,
     billingInterval = "month",
-    extraStorageGb = 0,
     rootPassword,
     sshPublicKey,
     agentConfig: agentConfigInput,
     domain,
   } = body as {
     name: string
+    planSlug?: string
     regionSlug?: string
-    serverConfigSlug?: string
     billingInterval?: "month" | "year"
-    extraStorageGb?: number
     rootPassword?: string
     sshPublicKey?: string
     agentConfig?: unknown
@@ -47,15 +47,42 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
   }
 
+  // ── Resolve plan ──────────────────────────────────────────────────
+  const planConfig = findPlanBySlug(planSlug)
+  if (!planConfig) {
+    return NextResponse.json({ error: "Invalid plan" }, { status: 400 })
+  }
+  if (planConfig.cta === "contact-sales") {
+    return NextResponse.json({ error: "Enterprise plans require contacting sales" }, { status: 400 })
+  }
+  if (!planConfig.serverConfigSlug) {
+    return NextResponse.json({ error: "Plan has no server configuration" }, { status: 400 })
+  }
+
+  // ── Free tier: enforce 1 free instance per user ───────────────────
+  if (planConfig.tier === "free") {
+    const existingFree = await db.query.subscriptions.findFirst({
+      where: and(
+        eq(subscriptions.userId, session.user.id),
+        eq(subscriptions.status, "active"),
+      ),
+      with: { plan: true },
+    })
+    if (existingFree && existingFree.plan.tier === "free") {
+      return NextResponse.json(
+        { error: "You already have a free instance. Upgrade to deploy more agents." },
+        { status: 409 },
+      )
+    }
+  }
+
+  // ── Domain validation ─────────────────────────────────────────────
   let normalizedDomain: string | null = null
   if (typeof domain === "string" && domain.trim().length > 0) {
     const trimmed = domain.trim().toLowerCase()
     if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(trimmed)) {
       return NextResponse.json({ error: "Invalid domain" }, { status: 400 })
     }
-    // Require a verified TXT record before attaching a domain to an instance.
-    // Prevents drive-by squatting: if you didn't prove ownership, we won't
-    // hand Let's Encrypt our IP for your domain.
     const verified = await isDomainVerified(session.user.id, trimmed)
     if (!verified) {
       const v = await getOrCreateVerification(session.user.id, trimmed)
@@ -72,6 +99,7 @@ export async function POST(req: NextRequest) {
     normalizedDomain = trimmed
   }
 
+  // ── Agent config parsing ──────────────────────────────────────────
   let parsedAgentConfig: ReturnType<typeof parseAgentConfig> | null = null
   if (agentConfigInput) {
     parsedAgentConfig = parseAgentConfig(agentConfigInput)
@@ -84,9 +112,6 @@ export async function POST(req: NextRequest) {
     ? parsedAgentConfig.data.deployment_target === "vps"
     : !!regionSlug
 
-  // Pre-flight: VPS path requires real Linode credentials + fleet SSH keys.
-  // Bail out before inserting the instance row so we don't leave orphan
-  // `provisioning` rows when the server is misconfigured.
   if (isVps) {
     const required = [
       "LINODE_API_TOKEN",
@@ -105,14 +130,10 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  let region, serverConfig
-
-  if (regionSlug && serverConfigSlug) {
-    ;[region, serverConfig] = await Promise.all([
-      db.query.regions.findFirst({ where: eq(regions.slug, regionSlug) }),
-      db.query.serverConfigs.findFirst({ where: eq(serverConfigs.slug, serverConfigSlug) }),
-    ])
-  }
+  // ── Resolve region + server config from plan ──────────────────────
+  let region = regionSlug
+    ? await db.query.regions.findFirst({ where: eq(regions.slug, regionSlug) })
+    : null
 
   if (!region) {
     region = await db.query.regions.findFirst({
@@ -120,12 +141,10 @@ export async function POST(req: NextRequest) {
       orderBy: asc(regions.sortOrder),
     })
   }
-  if (!serverConfig) {
-    serverConfig = await db.query.serverConfigs.findFirst({
-      where: eq(serverConfigs.isActive, true),
-      orderBy: asc(serverConfigs.sortOrder),
-    })
-  }
+
+  const serverConfig = await db.query.serverConfigs.findFirst({
+    where: eq(serverConfigs.slug, planConfig.serverConfigSlug),
+  })
 
   if (!region) {
     return NextResponse.json({ error: "No available region found" }, { status: 500 })
@@ -137,6 +156,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid or unavailable region" }, { status: 400 })
   }
 
+  // ── SSH key ───────────────────────────────────────────────────────
   let sshKeyId: string | undefined
   if (sshPublicKey) {
     if (!isValidPublicKey(sshPublicKey)) {
@@ -162,6 +182,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── Agent fields ──────────────────────────────────────────────────
   let agentFields: {
     agentType: string | null
     agentConfig: unknown
@@ -199,6 +220,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── Insert instance ───────────────────────────────────────────────
   const [instance] = await db
     .insert(instances)
     .values({
@@ -208,7 +230,7 @@ export async function POST(req: NextRequest) {
       regionId: region.id,
       serverConfigId: serverConfig.id,
       sshKeyId,
-      storageGb: serverConfig.storageGb + extraStorageGb,
+      storageGb: serverConfig.storageGb,
       billingInterval,
       status: "pending",
       rootPasswordEnc: rootPassword ? encryptRootPassword(rootPassword) : undefined,
@@ -217,17 +239,67 @@ export async function POST(req: NextRequest) {
     })
     .returning()
 
+  // ── Resolve the DB plan row ───────────────────────────────────────
+  const dbPlan = await db.query.plans.findFirst({
+    where: and(eq(plans.tier, planConfig.tier), eq(plans.isActive, true)),
+  })
+
   await db.insert(instanceLogs).values({
     instanceId: instance.id,
     level: "info",
-    message: `Instance created. Server: ${serverConfig.label}, Region: ${region.name}. Awaiting payment.`,
+    message: `Instance created. Plan: ${planConfig.name}, Server: ${serverConfig.label}, Region: ${region.name}. Awaiting payment.`,
   })
 
-  if (isStripeConfigured()) {
-    const plan = await db.query.plans.findFirst({
-      where: and(eq(plans.tier, "builder"), eq(plans.isActive, true)),
+  // ── Free tier: bypass Stripe, auto-provision ──────────────────────
+  if (planConfig.tier === "free") {
+    const instanceId = instance.id
+    const userId = session.user.id
+
+    ;(async () => {
+      try {
+        const freshInstance = await db.query.instances.findFirst({
+          where: eq(instances.id, instanceId),
+        })
+        if (freshInstance) {
+          await provisionBot(freshInstance)
+        }
+      } catch (err) {
+        console.error(
+          "[deploy] provisionBot failed (free tier):",
+          describeLinodeError(err),
+        )
+      }
+    })()
+
+    if (dbPlan) {
+      await db.insert(subscriptions).values({
+        userId,
+        planId: dbPlan.id,
+        instanceId,
+        interval: billingInterval,
+        status: "active",
+      })
+    }
+
+    if (planConfig.creditsPerPeriod > 0) {
+      try {
+        await grantCredits(userId, planConfig.creditsPerPeriod, `subscription:${planConfig.slug}:initial`)
+      } catch (err) {
+        console.error("[deploy] grantCredits failed (free tier):", err)
+      }
+    }
+
+    await db.insert(instanceLogs).values({
+      instanceId,
+      level: "info",
+      message: "Free tier: instance auto-activated (no payment required).",
     })
 
+    return NextResponse.json({ instanceId })
+  }
+
+  // ── Paid tier: Stripe Checkout ────────────────────────────────────
+  if (isStripeConfigured()) {
     const userRow = await db.query.users.findFirst({
       where: eq(users.id, session.user.id),
       columns: { stripeCustomerId: true },
@@ -246,26 +318,21 @@ export async function POST(req: NextRequest) {
         .where(eq(users.id, session.user.id))
     }
 
-    const price = calcInstancePrice({
-      serverConfig,
-      storageGb: extraStorageGb,
-      interval: billingInterval,
-    })
+    const unitAmount = planUnitAmountCents(planConfig, billingInterval)
 
     const checkoutSession = await stripe.checkout.sessions.create({
       customer: stripeCustomerId,
       mode: "subscription",
+      allow_promotion_codes: true,
       line_items: [
         {
           price_data: {
             currency: "usd",
             product_data: {
-              name: `${BRANDING.name} — ${serverConfig.label} (${region.name})`,
-              description: `${serverConfig.vcpu} vCPU, ${serverConfig.ramGb} GB RAM, ${serverConfig.storageGb + extraStorageGb} GB storage`,
+              name: `${BRANDING.name} — ${planConfig.name} Plan`,
+              description: `${serverConfig.vcpu} vCPU, ${serverConfig.ramGb} GB RAM, ${serverConfig.storageGb} GB storage · ${planConfig.creditsPerPeriod.toLocaleString()} credits/${billingInterval === "year" ? "yr" : "mo"}`,
             },
-            unit_amount: Math.round(
-              (billingInterval === "year" ? price.total / 12 : price.total) * 100
-            ),
+            unit_amount: unitAmount,
             recurring: {
               interval: billingInterval === "year" ? "year" : "month",
             },
@@ -276,7 +343,7 @@ export async function POST(req: NextRequest) {
       metadata: {
         instanceId: instance.id,
         userId: session.user.id,
-        planSlug: plan?.slug ?? "builder",
+        planSlug: planConfig.slug,
         interval: billingInterval,
       },
       success_url: `${BRANDING.appUrl}/dashboard/instances/${instance.id}`,
@@ -289,9 +356,7 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  // Dev mode: skip Stripe, auto-activate.
-  // Fire provisioning async so the HTTP response returns immediately.
-  // The frontend polls /api/instances/[id]/status for progress.
+  // ── Dev mode: skip Stripe, auto-activate ──────────────────────────
   const instanceId = instance.id
   const userId = session.user.id
 
@@ -301,8 +366,6 @@ export async function POST(req: NextRequest) {
         where: eq(instances.id, instanceId),
       })
       if (freshInstance) {
-        // provisionBot owns all state transitions + rollback internally.
-        // We just surface the error to logs here.
         await provisionBot(freshInstance)
       }
     } catch (err) {
@@ -313,13 +376,10 @@ export async function POST(req: NextRequest) {
     }
   })()
 
-  const plan = await db.query.plans.findFirst({
-    where: and(eq(plans.tier, "builder"), eq(plans.isActive, true)),
-  })
-  if (plan) {
+  if (dbPlan) {
     await db.insert(subscriptions).values({
       userId,
-      planId: plan.id,
+      planId: dbPlan.id,
       instanceId,
       interval: billingInterval,
       status: "active",

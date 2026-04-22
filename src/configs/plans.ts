@@ -20,7 +20,7 @@ export type PlanConfig = {
   sortOrder: number
   /** Credits granted each billing period (seed + product logic) */
   creditsPerPeriod: number
-  /** Monthly list price (0 for Free) */
+  /** Monthly list price (0 for Free) — this is the all-in customer-facing price */
   displayPriceMonthly: number
   /** Annual list price (0 for Free; Enterprise may omit use of this) */
   displayPriceYearly: number
@@ -28,6 +28,8 @@ export type PlanConfig = {
   cta: PlanCTA
   /** Enterprise custom price line */
   enterprisePriceLabel?: string
+  /** Server config slug that this plan provisions (null = custom / contact sales) */
+  serverConfigSlug: string | null
 }
 
 export const PLANS: readonly PlanConfig[] = [
@@ -51,6 +53,7 @@ export const PLANS: readonly PlanConfig[] = [
     displayPriceMonthly: 0,
     displayPriceYearly: 0,
     cta: "start-free",
+    serverConfigSlug: "shared-1g",
   },
   {
     slug: "builder",
@@ -73,6 +76,7 @@ export const PLANS: readonly PlanConfig[] = [
     displayPriceMonthly: 79,
     displayPriceYearly: 790,
     cta: "get-started",
+    serverConfigSlug: "shared-2g",
   },
   {
     slug: "operator",
@@ -96,6 +100,7 @@ export const PLANS: readonly PlanConfig[] = [
     displayPriceYearly: 1_990,
     highlight: true,
     cta: "get-started",
+    serverConfigSlug: "shared-4g",
   },
   {
     slug: "scale",
@@ -118,6 +123,7 @@ export const PLANS: readonly PlanConfig[] = [
     displayPriceMonthly: 399,
     displayPriceYearly: 3_990,
     cta: "get-started",
+    serverConfigSlug: "shared-8g",
   },
   {
     slug: "enterprise",
@@ -137,10 +143,11 @@ export const PLANS: readonly PlanConfig[] = [
     isActive: true,
     sortOrder: 40,
     creditsPerPeriod: 0,
-    displayPriceMonthly: 0,
-    displayPriceYearly: 0,
-    enterprisePriceLabel: "Starting at $1,000+/month",
+    displayPriceMonthly: 999,
+    displayPriceYearly: 9_990,
+    enterprisePriceLabel: "$999/month",
     cta: "contact-sales",
+    serverConfigSlug: "shared-16g",
   },
 ] as const
 
@@ -170,6 +177,11 @@ export const CREDIT_TOOLTIP =
 export function findPlanBySlug(slug: string): PlanConfig | undefined {
   return PLANS.find((p) => p.slug === slug)
 }
+
+/** Plans available for self-serve deployment (excludes enterprise / contact-sales) */
+export const DEPLOYABLE_PLANS = PLANS.filter(
+  (p) => p.cta !== "contact-sales" && p.serverConfigSlug !== null,
+)
 
 export function formatUsd(amount: number): string {
   return `$${amount.toLocaleString("en-US")}`

@@ -4,6 +4,7 @@ import { redirect } from "next/navigation"
 import { whereUserInstancesVisible } from "@/lib/instance-queries"
 import { Badge } from "@/components/ui/badge"
 import Link from "next/link"
+import { findPlanBySlug } from "@/configs/plans"
 
 const STATUS_STYLES: Record<string, string> = {
   running: "bg-[var(--accent-dim)] text-[var(--accent-color)] border-[var(--accent-color)]/30",
@@ -54,9 +55,12 @@ export default async function DashboardPage() {
 
   const activeInstances = allInstances.filter((i) => i.status === "running").length
   const activeSubs = allSubscriptions.filter((s) => s.status === "active").length
-  const monthlySpend = allInstances
-    .filter((i) => i.status === "running")
-    .reduce((sum, i) => sum + (i.serverConfig?.priceMonthly ?? 0), 0)
+  const monthlySpend = allSubscriptions
+    .filter((s) => s.status === "active")
+    .reduce((sum, s) => {
+      const cfg = findPlanBySlug(s.plan?.slug ?? "")
+      return sum + (cfg?.displayPriceMonthly ?? 0)
+    }, 0)
   const credits = user?.credits ?? 0
   const usageTotal = Number(usage30Rows[0]?.total ?? 0)
   const incidents24 = Number(incidents24Rows[0]?.count ?? 0)
