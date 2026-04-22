@@ -56,7 +56,7 @@ export async function GET(
     password,
     rootPassword,
     sshCommand: instance.ipAddress ? `ssh root@${instance.ipAddress}` : null,
-    gatewayUrl: instance.ipAddress ? `http://${instance.ipAddress}:18789` : null,
+    gatewayUrl: instance.ipAddress ? `http://${instance.ipAddress}` : null,
     loginUrl: instance.domain
       ? `https://${instance.domain}`
       : instance.ipAddress

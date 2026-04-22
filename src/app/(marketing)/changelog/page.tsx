@@ -22,11 +22,12 @@ const ENTRIES: Entry[] = [
     date: "2026-04-12",
     version: "v0.8.0",
     tag: "feature",
-    title: "Deploy wizard: Purpose, Capability, Serverless fix",
+    title: "Deploy wizard: streamlined agent-type-driven flow",
     body: [
-      "Two new intake steps (Purpose, Capability) capture use-case, tone, interface, and budget tier.",
-      "Serverless and shared-cluster targets now skip region/server/advanced steps entirely.",
-      "Telegram interface offers Immediate (paste token) or Deferred (connect later) modes.",
+      "Merged Project and Purpose into a single step with use-case selection, target user, and tone.",
+      "Removed Capability step — core actions are now auto-derived from the selected agent type.",
+      "Location selection moved under Interface. Telegram, Discord, REST API, Shared Cluster, and Serverless greyed out as coming soon.",
+      "Custom domain setup moved to post-deploy Controls tab.",
     ],
   },
   {

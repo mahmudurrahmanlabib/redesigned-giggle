@@ -13,7 +13,6 @@ import { generateSoul } from "@/lib/soul"
 import { routeModel } from "@/lib/model-router"
 import { provisionBot } from "@/lib/provisioner"
 import { describeLinodeError } from "@/lib/linode"
-import { isDomainVerified, recordName, expectedValue, getOrCreateVerification } from "@/lib/domain-verify"
 import { grantCredits } from "@/lib/credits"
 
 export async function POST(req: NextRequest) {
@@ -31,7 +30,6 @@ export async function POST(req: NextRequest) {
     rootPassword,
     sshPublicKey,
     agentConfig: agentConfigInput,
-    domain,
   } = body as {
     name: string
     planSlug?: string
@@ -40,7 +38,6 @@ export async function POST(req: NextRequest) {
     rootPassword?: string
     sshPublicKey?: string
     agentConfig?: unknown
-    domain?: string
   }
 
   if (!name) {
@@ -74,29 +71,6 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       )
     }
-  }
-
-  // ── Domain validation ─────────────────────────────────────────────
-  let normalizedDomain: string | null = null
-  if (typeof domain === "string" && domain.trim().length > 0) {
-    const trimmed = domain.trim().toLowerCase()
-    if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(trimmed)) {
-      return NextResponse.json({ error: "Invalid domain" }, { status: 400 })
-    }
-    const verified = await isDomainVerified(session.user.id, trimmed)
-    if (!verified) {
-      const v = await getOrCreateVerification(session.user.id, trimmed)
-      return NextResponse.json(
-        {
-          error: "Domain ownership not verified",
-          hint: `Publish a TXT record: ${recordName(trimmed)}  "${expectedValue(v.nonce)}"`,
-          recordName: v.recordName,
-          expectedValue: v.expectedValue,
-        },
-        { status: 422 },
-      )
-    }
-    normalizedDomain = trimmed
   }
 
   // ── Agent config parsing ──────────────────────────────────────────
@@ -234,7 +208,6 @@ export async function POST(req: NextRequest) {
       billingInterval,
       status: "pending",
       rootPasswordEnc: rootPassword ? encryptRootPassword(rootPassword) : undefined,
-      domain: normalizedDomain,
       ...agentFields,
     })
     .returning()

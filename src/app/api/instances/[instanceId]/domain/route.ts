@@ -3,7 +3,7 @@ import { auth } from "@/auth"
 import { db, instances, eq } from "@/db"
 import { whereUserInstanceVisible } from "@/lib/instance-queries"
 import { sshInstallCaddyfile, sshRun } from "@/lib/ssh"
-import { renderCaddyfile, OPENCLAW_GATEWAY_PORT, OPENCLAW_SERVICE_NAME } from "@/lib/openclaw"
+import { renderCaddyfile, OPENCLAW_SERVICE_NAME } from "@/lib/openclaw"
 
 export async function POST(
   req: NextRequest,
@@ -47,7 +47,7 @@ export async function POST(
 
     const allowedOrigin = domain
       ? `https://${domain}`
-      : `http://${instance.ipAddress}:${OPENCLAW_GATEWAY_PORT}`
+      : `http://${instance.ipAddress}`
     const OPENCLAW_DIR = "/opt/openclaw"
     await sshRun(
       target,

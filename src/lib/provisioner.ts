@@ -557,7 +557,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     /* --- 8. Overlay our settings via openclaw config set ------------ */
     const allowedOrigin = instance.domain
       ? `https://${instance.domain}`
-      : `http://${ipAddress}:${OPENCLAW_GATEWAY_PORT}`
+      : `http://${ipAddress}`
 
     const configCmds = [
       `openclaw config set gateway.port ${OPENCLAW_GATEWAY_PORT}`,

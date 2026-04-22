@@ -75,7 +75,7 @@ export function renderOpenclawConfig(args: {
   const allowedOrigin = args.domain
     ? `https://${args.domain}`
     : args.ipAddress
-      ? `http://${args.ipAddress}:${OPENCLAW_GATEWAY_PORT}`
+      ? `http://${args.ipAddress}`
       : `http://localhost:${OPENCLAW_GATEWAY_PORT}`
 
   return `{

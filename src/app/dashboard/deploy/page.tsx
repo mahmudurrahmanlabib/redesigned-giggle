@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { REGIONS, type RegionConfig } from "@/configs/regions"
@@ -36,25 +36,21 @@ const TONES: { value: Tone; label: string; hint: string }[] = [
   { value: "friendly", label: "Friendly", hint: "Warm, approachable, conversational" },
 ]
 
-const INTERFACES: { value: Interface; label: string; hint: string }[] = [
-  { value: "web", label: "Web Chat", hint: "Embeddable widget on your site" },
-  { value: "telegram", label: "Telegram", hint: "Bot under your Telegram handle" },
-  { value: "discord", label: "Discord", hint: "Invite to your server" },
-  { value: "api", label: "REST API", hint: "Programmatic access only" },
+const INTERFACES: { value: Interface; label: string; hint: string; enabled: boolean }[] = [
+  { value: "web", label: "Web Chat", hint: "Embeddable widget on your site", enabled: true },
+  { value: "telegram", label: "Telegram", hint: "Bot under your Telegram handle", enabled: false },
+  { value: "discord", label: "Discord", hint: "Invite to your server", enabled: false },
+  { value: "api", label: "REST API", hint: "Programmatic access only", enabled: false },
 ]
 
-const DEPLOYMENT_TARGETS: { value: DeploymentTarget; label: string; hint: string }[] = [
-  { value: "vps", label: "Dedicated VPS", hint: "Single-tenant, single instance, isolated" },
-  { value: "shared", label: "Shared Cluster", hint: "Multi-tenant pool, cheapest, autoscaled" },
-  { value: "serverless", label: "Serverless (Managed)", hint: "We run it — pay per request only" },
+const DEPLOYMENT_TARGETS: { value: DeploymentTarget; label: string; hint: string; enabled: boolean }[] = [
+  { value: "vps", label: "Dedicated VPS", hint: "Single-tenant, single instance, isolated", enabled: true },
+  { value: "shared", label: "Shared Cluster", hint: "Multi-tenant pool, cheapest, autoscaled", enabled: false },
+  { value: "serverless", label: "Serverless (Managed)", hint: "We run it — pay per request only", enabled: false },
 ]
 
-type Step = "project" | "purpose" | "capability" | "interface" | "plan" | "region" | "advanced" | "billing"
-const ALL_STEPS: Step[] = ["project", "purpose", "capability", "interface", "plan", "region", "advanced", "billing"]
-const SERVERLESS_SKIP: Step[] = ["region", "advanced"]
-function stepsFor(target: DeploymentTarget): Step[] {
-  return target === "vps" ? ALL_STEPS : ALL_STEPS.filter((s) => !SERVERLESS_SKIP.includes(s))
-}
+type Step = "project" | "interface" | "plan" | "advanced" | "billing"
+const ALL_STEPS: Step[] = ["project", "interface", "plan", "advanced", "billing"]
 
 function deploymentSlug(raw: string) {
   return raw
@@ -66,16 +62,11 @@ function deploymentSlug(raw: string) {
 
 const STEP_LABELS: Record<Step, string> = {
   project: "Project",
-  purpose: "Purpose",
-  capability: "Capability",
   interface: "Interface",
   plan: "Plan",
-  region: "Location",
   advanced: "Advanced",
   billing: "Billing",
 }
-
-const DOMAIN_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/
 
 function resolveServerForPlan(plan: PlanConfig): ServerTypeConfig | null {
   if (!plan.serverConfigSlug) return null
@@ -87,55 +78,38 @@ export default function DeployPage() {
   const [step, setStep] = useState<Step>("project")
   const [deploying, setDeploying] = useState(false)
 
-  // Agent intake
+  // Project + agent intake (merged)
+  const [projectName, setProjectName] = useState("")
   const [useCase, setUseCase] = useState<string>("")
   const [targetUser, setTargetUser] = useState<string>("")
   const [tone, setTone] = useState<Tone>("formal")
   const [interfaceKind, setInterfaceKind] = useState<Interface>("web")
-  const [deploymentTarget, setDeploymentTarget] = useState<DeploymentTarget>("vps")
-  const [coreActions, setCoreActions] = useState<string[]>([])
-  const [knowledgeSource, setKnowledgeSource] = useState<KnowledgeSource>("none")
+  const [deploymentTarget] = useState<DeploymentTarget>("vps")
 
-  // Telegram interface binding
-  const [telegramMode, setTelegramMode] = useState<"immediate" | "deferred">("deferred")
-  const [telegramToken, setTelegramToken] = useState<string>("")
-
-  const [projectName, setProjectName] = useState("")
   const [selectedRegion, setSelectedRegion] = useState<RegionConfig | null>(null)
   const [billingInterval, setBillingInterval] = useState<BillingInterval>("month")
   const [selectedPlan, setSelectedPlan] = useState<PlanConfig | null>(null)
   const [rootPassword, setRootPassword] = useState("")
   const [sshKey, setSshKey] = useState("")
-  const [domain, setDomain] = useState("")
 
   const selectedServer = selectedPlan ? resolveServerForPlan(selectedPlan) : null
 
-  const STEPS = stepsFor(deploymentTarget)
-  useEffect(() => {
-    if (!STEPS.includes(step)) setStep(STEPS[0])
-  }, [STEPS, step])
+  const STEPS = ALL_STEPS
   const stepIdx = STEPS.indexOf(step)
   const selectedCategoryObj = AGENT_CATEGORIES.find((c) => c.slug === useCase)
-  const telegramImmediateInvalid =
-    interfaceKind === "telegram" &&
-    telegramMode === "immediate" &&
-    !/^\d{6,12}:[A-Za-z0-9_-]{30,}$/.test(telegramToken.trim())
+
+  const coreActions = selectedCategoryObj?.examples ? [...selectedCategoryObj.examples] : []
+
   const canNext = (() => {
     switch (step) {
       case "project":
-        return projectName.trim().length >= 2
-      case "purpose":
-        return !!useCase && targetUser.trim().length >= 2 && !!tone
-      case "capability":
-        return coreActions.length > 0
+        return projectName.trim().length >= 2 && !!useCase && targetUser.trim().length >= 2 && !!tone
       case "interface":
-        return !!interfaceKind && !!deploymentTarget && !telegramImmediateInvalid
+        return !!interfaceKind && !!deploymentTarget && !!selectedRegion
       case "plan":
         return !!selectedPlan
-      case "region":
-        return !!selectedRegion
       case "advanced":
-        return domain.trim() === "" || DOMAIN_RE.test(domain.trim().toLowerCase())
+        return true
       case "billing":
         return true
     }
@@ -153,8 +127,7 @@ export default function DeployPage() {
     : null
 
   async function handleDeploy() {
-    if (!projectName.trim() || !selectedPlan) return
-    if (deploymentTarget === "vps" && !selectedRegion) return
+    if (!projectName.trim() || !selectedPlan || !selectedRegion) return
     setDeploying(true)
     try {
       const res = await fetch("/api/deploy", {
@@ -163,11 +136,10 @@ export default function DeployPage() {
         body: JSON.stringify({
           name: projectName.trim(),
           planSlug: selectedPlan.slug,
-          regionSlug: deploymentTarget === "vps" ? selectedRegion?.slug : undefined,
+          regionSlug: selectedRegion.slug,
           billingInterval,
-          rootPassword: deploymentTarget === "vps" ? (rootPassword || undefined) : undefined,
-          sshPublicKey: deploymentTarget === "vps" ? (sshKey || undefined) : undefined,
-          domain: deploymentTarget === "vps" && domain.trim() ? domain.trim().toLowerCase() : undefined,
+          rootPassword: rootPassword || undefined,
+          sshPublicKey: sshKey || undefined,
           agentConfig: {
             use_case: useCase,
             target_user: targetUser.trim(),
@@ -175,15 +147,10 @@ export default function DeployPage() {
             tone,
             interface: interfaceKind,
             deployment_target: deploymentTarget,
-            knowledge_source: knowledgeSource,
+            knowledge_source: "none",
             budget_tier: "mid",
           } satisfies AgentConfig,
-          interfaceBinding:
-            interfaceKind === "telegram"
-              ? telegramMode === "immediate"
-                ? { kind: "telegram", mode: "immediate", token: telegramToken.trim() }
-                : { kind: "telegram", mode: "deferred" }
-              : { kind: interfaceKind, mode: "immediate" },
+          interfaceBinding: { kind: interfaceKind, mode: "immediate" },
         }),
       })
       const data = await res.json()
@@ -245,12 +212,33 @@ export default function DeployPage() {
 
       {/* Step content */}
       <div className="border border-[var(--border-color)] bg-[var(--card-bg)] p-6 md:p-8">
-        {/* STEP: Purpose */}
-        {step === "purpose" && (
+        {/* STEP: Project (name + use case + target user + tone + templates) */}
+        {step === "project" && (
           <div className="space-y-6">
             <div>
-              <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">Agent Purpose</h2>
-              <p className="text-sm text-[var(--text-secondary)]">What will this agent do, and who is it for?</p>
+              <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">Project</h2>
+              <p className="text-sm text-[var(--text-secondary)]">Name your agent, pick a use case, and define its audience.</p>
+            </div>
+
+            <div>
+              <label className="block text-xs uppercase tracking-wide text-[var(--text-secondary)] mb-2">Project Name</label>
+              <input
+                type="text"
+                value={projectName}
+                onChange={(e) => setProjectName(e.target.value)}
+                placeholder="my-ai-agent"
+                className="w-full bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/50 focus:outline-none focus:border-blue-500/50 transition-colors"
+              />
+              {projectName.trim().length > 0 && (
+                <p className="text-[11px] font-mono text-[var(--text-secondary)] mt-2">
+                  slug: {slugPreview || "—"}
+                </p>
+              )}
+              {projectName.trim().length > 0 && projectName.trim().length < 2 && (
+                <p className="text-xs text-amber-400/90 mt-1">
+                  Enter at least 2 characters to continue.
+                </p>
+              )}
             </div>
 
             <div className="border border-[var(--accent-color)]/40 bg-[var(--accent-dim)]/30 p-4">
@@ -264,11 +252,7 @@ export default function DeployPage() {
                     onClick={() => {
                       setUseCase(t.useCase)
                       setTone(t.tone as Tone)
-                      setInterfaceKind(t.interfaceKind as Interface)
-                      setDeploymentTarget(t.deploymentTarget as DeploymentTarget)
-                      setKnowledgeSource(t.knowledgeSource as KnowledgeSource)
                       const cat = AGENT_CATEGORIES.find((c) => c.slug === t.useCase)
-                      setCoreActions(t.coreActionHints.length > 0 ? t.coreActionHints : (cat?.examples.slice(0, 2) ?? []))
                       if (!targetUser) setTargetUser(cat?.description.split(".")[0] ?? "")
                       toast.success(`${t.name} template applied`)
                     }}
@@ -293,7 +277,7 @@ export default function DeployPage() {
                 {AGENT_CATEGORIES.map((cat) => (
                   <button
                     key={cat.slug}
-                    onClick={() => { setUseCase(cat.slug); setCoreActions([]) }}
+                    onClick={() => setUseCase(cat.slug)}
                     className={`p-3 rounded-xl border text-left transition-all ${
                       useCase === cat.slug
                         ? "border-[var(--accent-color)] bg-[var(--accent-dim)]"
@@ -340,14 +324,13 @@ export default function DeployPage() {
           </div>
         )}
 
-        {/* STEP: Interface */}
+        {/* STEP: Interface (interface + deployment target + location) */}
         {step === "interface" && (
           <div className="space-y-6">
             <div>
               <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">Interface & Deployment</h2>
               <p className="text-sm text-[var(--text-secondary)]">
-                <span className="text-[var(--text-primary)]">Interface</span> is where the bot lives.
-                <span className="text-[var(--text-primary)] ml-1">Deployment</span> is how it runs. These are separate.
+                Choose where users reach the bot, how it runs, and where it lives.
               </p>
             </div>
 
@@ -357,14 +340,22 @@ export default function DeployPage() {
                 {INTERFACES.map((i) => (
                   <button
                     key={i.value}
-                    onClick={() => setInterfaceKind(i.value)}
+                    disabled={!i.enabled}
+                    onClick={() => i.enabled && setInterfaceKind(i.value)}
                     className={`w-full p-3 rounded-xl border text-left transition-all ${
-                      interfaceKind === i.value
+                      !i.enabled
+                        ? "border-[var(--border-color)]/50 bg-[var(--card-bg)]/50 opacity-50 cursor-not-allowed"
+                        : interfaceKind === i.value
                         ? "border-[var(--accent-color)] bg-[var(--accent-dim)]"
                         : "border-[var(--border-color)] bg-[var(--card-bg)] hover:border-[var(--accent-color)]"
                     }`}
                   >
-                    <p className="text-[var(--text-primary)] text-sm font-medium">{i.label}</p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-[var(--text-primary)] text-sm font-medium">{i.label}</p>
+                      {!i.enabled && (
+                        <span className="text-[10px] text-[var(--text-secondary)]/60 border border-zinc-700 rounded px-1.5 py-0.5">Coming soon</span>
+                      )}
+                    </div>
                     <p className="text-[var(--text-secondary)] text-xs">{i.hint}</p>
                   </button>
                 ))}
@@ -377,173 +368,62 @@ export default function DeployPage() {
                 {DEPLOYMENT_TARGETS.map((d) => (
                   <button
                     key={d.value}
-                    onClick={() => setDeploymentTarget(d.value)}
+                    disabled={!d.enabled}
+                    onClick={() => {}}
                     className={`w-full p-3 rounded-xl border text-left transition-all ${
-                      deploymentTarget === d.value
+                      !d.enabled
+                        ? "border-[var(--border-color)]/50 bg-[var(--card-bg)]/50 opacity-50 cursor-not-allowed"
+                        : deploymentTarget === d.value
                         ? "border-[var(--accent-color)] bg-[var(--accent-dim)]"
                         : "border-[var(--border-color)] bg-[var(--card-bg)] hover:border-[var(--accent-color)]"
                     }`}
                   >
-                    <p className="text-[var(--text-primary)] text-sm font-medium">{d.label}</p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-[var(--text-primary)] text-sm font-medium">{d.label}</p>
+                      {!d.enabled && (
+                        <span className="text-[10px] text-[var(--text-secondary)]/60 border border-zinc-700 rounded px-1.5 py-0.5">Coming soon</span>
+                      )}
+                    </div>
                     <p className="text-[var(--text-secondary)] text-xs">{d.hint}</p>
                   </button>
                 ))}
               </div>
-              {deploymentTarget !== "vps" && (
-                <p className="text-xs text-[var(--accent-color)] mt-2 font-mono">
-                  {deploymentTarget === "serverless" ? "Serverless" : "Shared cluster"} skips region/advanced steps — infra is fully managed.
-                </p>
-              )}
             </div>
 
-            {interfaceKind === "telegram" && (
-              <div className="border border-[var(--border-color)] bg-[var(--bg-secondary)] rounded-xl p-4 space-y-3">
-                <p className="text-xs uppercase tracking-wide text-[var(--accent-color)] font-mono">Telegram Binding</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  <button
-                    onClick={() => setTelegramMode("immediate")}
-                    className={`p-3 rounded-xl border text-left transition-all ${
-                      telegramMode === "immediate"
-                        ? "border-[var(--accent-color)] bg-[var(--accent-dim)]"
-                        : "border-[var(--border-color)] bg-[var(--card-bg)] hover:border-[var(--accent-color)]"
-                    }`}
-                  >
-                    <p className="text-[var(--text-primary)] text-sm font-medium">Connect now</p>
-                    <p className="text-[var(--text-secondary)] text-xs">Paste your BotFather token — we bind before launch.</p>
-                  </button>
-                  <button
-                    onClick={() => setTelegramMode("deferred")}
-                    className={`p-3 rounded-xl border text-left transition-all ${
-                      telegramMode === "deferred"
-                        ? "border-[var(--accent-color)] bg-[var(--accent-dim)]"
-                        : "border-[var(--border-color)] bg-[var(--card-bg)] hover:border-[var(--accent-color)]"
-                    }`}
-                  >
-                    <p className="text-[var(--text-primary)] text-sm font-medium">Connect later</p>
-                    <p className="text-[var(--text-secondary)] text-xs">Deploy without Telegram — bind from the Interfaces tab.</p>
-                  </button>
+            <div>
+              <label className="block text-xs uppercase tracking-wide text-[var(--text-secondary)] mb-2">Location · server region</label>
+              <div className="flex items-center justify-between border border-[var(--border-color)] bg-[var(--card-bg)] px-4 py-2.5 rounded-xl mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-[var(--accent-color)] animate-pulse" />
+                  <p className="text-xs font-mono text-[var(--text-primary)]">All regions operational</p>
                 </div>
-
-                {telegramMode === "immediate" && (
-                  <div>
-                    <label className="block text-xs uppercase tracking-wide text-[var(--text-secondary)] mb-2">Bot Token</label>
-                    <input
-                      type="password"
-                      value={telegramToken}
-                      onChange={(e) => setTelegramToken(e.target.value)}
-                      placeholder="123456789:ABCDEF-Gh1Jk2Lm3Nop4Qr5St6Uv7Wx8Yz"
-                      className="w-full bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/40 font-mono text-sm focus:outline-none focus:border-[var(--accent-color)]/50"
-                    />
-                    {telegramToken && telegramImmediateInvalid && (
-                      <p className="text-xs text-amber-400 mt-2">Token format looks off. Expected `NNNN:LONGSTRING` from @BotFather.</p>
-                    )}
-                  </div>
-                )}
+                <p className="text-[10px] font-mono text-[var(--text-secondary)]/70">live</p>
               </div>
-            )}
-          </div>
-        )}
-
-        {/* STEP: Capability */}
-        {step === "capability" && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">Capabilities</h2>
-              <p className="text-sm text-[var(--text-secondary)]">Pick the core actions your agent should handle and configure its knowledge source.</p>
-            </div>
-
-            <div>
-              <label className="block text-xs uppercase tracking-wide text-[var(--text-secondary)] mb-2">
-                Core Actions {selectedCategoryObj && <span className="text-[var(--text-secondary)] normal-case">· suggested from {selectedCategoryObj.name}</span>}
-              </label>
-              <div className="space-y-2">
-                {(selectedCategoryObj?.examples ?? []).map((action) => {
-                  const checked = coreActions.includes(action)
-                  return (
-                    <button
-                      key={action}
-                      onClick={() =>
-                        setCoreActions((prev) =>
-                          prev.includes(action) ? prev.filter((a) => a !== action) : [...prev, action]
-                        )
-                      }
-                      className={`w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${
-                        checked
-                          ? "border-[var(--accent-color)] bg-[var(--accent-dim)]"
-                          : "border-[var(--border-color)] bg-[var(--card-bg)] hover:border-[var(--accent-color)]"
-                      }`}
-                    >
-                      <span className={`w-4 h-4 border flex items-center justify-center text-[10px] font-bold ${
-                        checked ? "border-[var(--accent-color)] bg-[var(--accent-color)] text-black" : "border-[var(--border-color)]"
-                      }`}>
-                        {checked ? "✓" : ""}
-                      </span>
-                      <span className="text-[var(--text-primary)] text-sm">{action}</span>
-                    </button>
-                  )
-                })}
-                {!selectedCategoryObj && (
-                  <p className="text-sm text-amber-400/90">Go back and pick a use case first to see suggested actions.</p>
-                )}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs uppercase tracking-wide text-[var(--text-secondary)] mb-2">Knowledge Source</label>
-              <div className="space-y-2">
-                {(["none", "url", "file"] as KnowledgeSource[]).map((k) => (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {REGIONS.map((r) => (
                   <button
-                    key={k}
-                    onClick={() => setKnowledgeSource(k)}
-                    className={`w-full p-3 rounded-xl border text-left transition-all capitalize ${
-                      knowledgeSource === k
+                    key={r.slug}
+                    disabled={!r.available}
+                    onClick={() => setSelectedRegion(r)}
+                    className={`flex items-center gap-4 p-4 rounded-xl border transition-all text-left ${
+                      selectedRegion?.slug === r.slug
                         ? "border-[var(--accent-color)] bg-[var(--accent-dim)]"
-                        : "border-[var(--border-color)] bg-[var(--card-bg)] hover:border-[var(--accent-color)]"
+                        : r.available
+                        ? "border-[var(--border-color)] bg-[var(--card-bg)] hover:border-[var(--accent-color)] hover:bg-[var(--card-hover)]"
+                        : "border-[var(--border-color)]/50 bg-[var(--card-bg)]/50 opacity-50 cursor-not-allowed"
                     }`}
                   >
-                    <p className="text-[var(--text-primary)] text-sm font-medium">{k === "none" ? "No external knowledge" : k}</p>
-                    <p className="text-[var(--text-secondary)] text-xs">
-                      {k === "none" && "Pure LLM, no retrieval."}
-                      {k === "url" && "Crawl URLs into a vector store at deploy."}
-                      {k === "file" && "Upload documents after deploy."}
-                    </p>
+                    <span className="text-2xl">{r.flag}</span>
+                    <div>
+                      <p className="text-[var(--text-primary)] font-medium text-sm">{r.name}</p>
+                      <p className="text-[var(--text-secondary)] text-xs">{r.country}</p>
+                    </div>
+                    {!r.available && (
+                      <span className="ml-auto text-xs text-[var(--text-secondary)]/50 border border-zinc-800 rounded px-2 py-0.5">Soon</span>
+                    )}
                   </button>
                 ))}
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* STEP: Project */}
-        {step === "project" && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">Project Name</h2>
-              <p className="text-sm text-[var(--text-secondary)]">Give your deployment a name. This becomes its slug identifier.</p>
-            </div>
-            <input
-              type="text"
-              value={projectName}
-              onChange={(e) => setProjectName(e.target.value)}
-              placeholder="my-ai-agent"
-              className="w-full bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/50 focus:outline-none focus:border-blue-500/50 transition-colors"
-            />
-            <div className="rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] px-4 py-3">
-              <p className="text-[0.65rem] font-medium uppercase tracking-wide text-[var(--text-secondary)] mb-1">
-                URL slug
-              </p>
-              <p className="font-mono text-sm text-[var(--text-primary)] break-all">
-                {slugPreview || (
-                  <span className="text-[var(--text-secondary)] not-italic">
-                    Type a name to preview (letters, numbers, spaces, and hyphens).
-                  </span>
-                )}
-              </p>
-              {projectName.trim().length > 0 && projectName.trim().length < 2 && (
-                <p className="text-xs text-amber-400/90 mt-2">
-                  Enter at least 2 characters to continue — that keeps deployment names unique.
-                </p>
-              )}
             </div>
           </div>
         )}
@@ -614,7 +494,6 @@ export default function DeployPage() {
                 )
               })}
 
-              {/* Enterprise card — not selectable */}
               {enterprisePlan && (
                 <div className="w-full p-5 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] opacity-80">
                   <div className="flex items-start justify-between">
@@ -650,7 +529,6 @@ export default function DeployPage() {
               )}
             </div>
 
-            {/* Read-only server info for selected plan */}
             {selectedPlan && selectedServer && (
               <div className="border border-[var(--border-color)] bg-[var(--bg-secondary)] rounded-xl p-4">
                 <p className="text-[10px] uppercase tracking-[0.1em] font-mono text-[var(--accent-color)] mb-2">
@@ -679,44 +557,42 @@ export default function DeployPage() {
           </div>
         )}
 
-        {/* STEP: Region */}
-        {step === "region" && (
+        {/* STEP: Advanced (root password + SSH key only) */}
+        {step === "advanced" && (
           <div className="space-y-6">
-            <div className="flex items-center justify-between border border-[var(--border-color)] bg-[var(--card-bg)] px-4 py-2.5 rounded-xl">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-[var(--accent-color)] animate-pulse" />
-                <p className="text-xs font-mono text-[var(--text-primary)]">All regions operational</p>
-              </div>
-              <p className="text-[10px] font-mono text-[var(--text-secondary)]/70">live</p>
-            </div>
             <div>
-              <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">Server Location</h2>
-              <p className="text-sm text-[var(--text-secondary)]">Choose the region closest to your users for optimal latency.</p>
+              <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">Advanced Options</h2>
+              <p className="text-sm text-[var(--text-secondary)]">
+                Optional configuration. All fields are independent — fill only what you need.
+              </p>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {REGIONS.map((r) => (
-                <button
-                  key={r.slug}
-                  disabled={!r.available}
-                  onClick={() => setSelectedRegion(r)}
-                  className={`flex items-center gap-4 p-4 rounded-xl border transition-all text-left ${
-                    selectedRegion?.slug === r.slug
-                      ? "border-[var(--accent-color)] bg-[var(--accent-dim)]"
-                      : r.available
-                      ? "border-[var(--border-color)] bg-[var(--card-bg)] hover:border-[var(--accent-color)] hover:bg-[var(--card-hover)]"
-                      : "border-[var(--border-color)]/50 bg-[var(--card-bg)]/50 opacity-50 cursor-not-allowed"
-                  }`}
-                >
-                  <span className="text-2xl">{r.flag}</span>
-                  <div>
-                    <p className="text-[var(--text-primary)] font-medium text-sm">{r.name}</p>
-                    <p className="text-[var(--text-secondary)] text-xs">{r.country}</p>
-                  </div>
-                  {!r.available && (
-                    <span className="ml-auto text-xs text-[var(--text-secondary)]/50 border border-zinc-800 rounded px-2 py-0.5">Soon</span>
-                  )}
-                </button>
-              ))}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-[var(--text-primary)] mb-2">Root Password</label>
+                <input
+                  type="password"
+                  value={rootPassword}
+                  onChange={(e) => setRootPassword(e.target.value)}
+                  placeholder="Leave blank for auto-generated"
+                  className="w-full bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/50 focus:outline-none focus:border-blue-500/50 transition-colors"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-[var(--text-primary)] mb-2">SSH Public Key</label>
+                <textarea
+                  value={sshKey}
+                  onChange={(e) => setSshKey(e.target.value)}
+                  placeholder="ssh-ed25519 AAAA..."
+                  rows={3}
+                  className="w-full bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/50 focus:outline-none focus:border-blue-500/50 transition-colors font-mono text-sm resize-none"
+                />
+              </div>
+
+              <p className="text-[11px] font-mono text-[var(--text-secondary)]">
+                Custom domains can be configured after deployment from the instance Controls tab.
+              </p>
             </div>
           </div>
         )}
@@ -789,7 +665,7 @@ export default function DeployPage() {
                   <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">Plan</p>
                   <p className="text-[var(--text-primary)] font-medium">{selectedPlan?.name ?? "—"}</p>
                 </div>
-                {deploymentTarget === "vps" && selectedRegion && (
+                {selectedRegion && (
                   <div className="bg-[var(--card-bg)] rounded-xl p-4">
                     <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">Region</p>
                     <p className="text-[var(--text-primary)] font-medium">{selectedRegion.flag} {selectedRegion.name}</p>
@@ -807,12 +683,6 @@ export default function DeployPage() {
                     <p className="text-[var(--text-primary)] font-medium">{billingInterval === "year" ? "Yearly" : "Monthly"}</p>
                   </div>
                 )}
-                {domain.trim() && (
-                  <div className="bg-[var(--card-bg)] rounded-xl p-4">
-                    <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">Domain</p>
-                    <p className="text-[var(--text-primary)] font-medium font-mono text-xs truncate">{domain.trim()}</p>
-                  </div>
-                )}
                 {sshKey && (
                   <div className="bg-[var(--card-bg)] rounded-xl p-4">
                     <p className="text-[var(--text-secondary)] text-xs uppercase tracking-wide mb-1">SSH Key</p>
@@ -821,7 +691,6 @@ export default function DeployPage() {
                 )}
               </div>
 
-              {/* Plan price summary */}
               {selectedPlan && (
                 <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-6 space-y-3">
                   <div className="flex justify-between text-sm">
@@ -861,62 +730,6 @@ export default function DeployPage() {
                   )}
                 </div>
               )}
-            </div>
-          </div>
-        )}
-
-        {/* STEP: Advanced (includes Custom Domain) */}
-        {step === "advanced" && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">Advanced Options</h2>
-              <p className="text-sm text-[var(--text-secondary)]">
-                Optional configuration. All fields are independent — fill only what you need.
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-[var(--text-primary)] mb-2">Root Password</label>
-                <input
-                  type="password"
-                  value={rootPassword}
-                  onChange={(e) => setRootPassword(e.target.value)}
-                  placeholder="Leave blank for auto-generated"
-                  className="w-full bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/50 focus:outline-none focus:border-blue-500/50 transition-colors"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm text-[var(--text-primary)] mb-2">SSH Public Key</label>
-                <textarea
-                  value={sshKey}
-                  onChange={(e) => setSshKey(e.target.value)}
-                  placeholder="ssh-ed25519 AAAA..."
-                  rows={3}
-                  className="w-full bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/50 focus:outline-none focus:border-blue-500/50 transition-colors font-mono text-sm resize-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm text-[var(--text-primary)] mb-2">Custom Domain</label>
-                <input
-                  type="text"
-                  value={domain}
-                  onChange={(e) => setDomain(e.target.value)}
-                  placeholder="agent.example.com"
-                  className="w-full bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/50 focus:outline-none focus:border-[var(--accent-color)]/50 transition-colors font-mono"
-                />
-                {domain.trim() && !DOMAIN_RE.test(domain.trim().toLowerCase()) && (
-                  <p className="text-xs text-amber-400 font-mono mt-2">
-                    Not a valid domain — expected like <span>agent.example.com</span>
-                  </p>
-                )}
-                <p className="text-[11px] font-mono text-[var(--text-secondary)] mt-2">
-                  Leave blank to expose on the server IP over HTTP. You can attach a domain later.
-                  After deploy, add an <span className="text-[var(--text-primary)]">A</span> record pointing to the server IP — we&apos;ll show the exact value.
-                </p>
-              </div>
             </div>
           </div>
         )}
