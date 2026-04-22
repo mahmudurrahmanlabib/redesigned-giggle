@@ -9,32 +9,21 @@ import { DEPLOYABLE_PLANS, PLANS, type PlanConfig } from "@/configs/plans"
 import { calcPlanPrice, formatUsd } from "@/lib/pricing"
 import type { BillingInterval } from "@/lib/pricing"
 import { AGENT_CATEGORIES } from "@/configs/agent-categories"
-import { DEPLOY_TEMPLATES } from "@/configs/deploy-templates"
 import { BRANDING } from "@/configs/branding"
 
-type Tone = "formal" | "sales" | "technical" | "friendly"
 type Interface = "web" | "telegram" | "discord" | "api"
 type DeploymentTarget = "vps" | "shared" | "serverless"
-type KnowledgeSource = "none" | "url" | "file"
-type BudgetTier = "low" | "mid" | "high"
 
 type AgentConfig = {
   use_case: string
   target_user: string
   core_actions: string[]
-  tone: Tone
+  tone: string
   interface: Interface
   deployment_target: DeploymentTarget
-  knowledge_source: KnowledgeSource
-  budget_tier: BudgetTier
+  knowledge_source: string
+  budget_tier: string
 }
-
-const TONES: { value: Tone; label: string; hint: string }[] = [
-  { value: "formal", label: "Formal", hint: "Precise, business-ready, measured" },
-  { value: "sales", label: "Sales", hint: "Persuasive, benefit-led, CTA-driven" },
-  { value: "technical", label: "Technical", hint: "Exact, jargon-aware, developer-focused" },
-  { value: "friendly", label: "Friendly", hint: "Warm, approachable, conversational" },
-]
 
 const INTERFACES: { value: Interface; label: string; hint: string; enabled: boolean }[] = [
   { value: "web", label: "Web Chat", hint: "Embeddable widget on your site", enabled: true },
@@ -81,8 +70,6 @@ export default function DeployPage() {
   // Project + agent intake (merged)
   const [projectName, setProjectName] = useState("")
   const [useCase, setUseCase] = useState<string>("")
-  const [targetUser, setTargetUser] = useState<string>("")
-  const [tone, setTone] = useState<Tone>("formal")
   const [interfaceKind, setInterfaceKind] = useState<Interface>("web")
   const [deploymentTarget] = useState<DeploymentTarget>("vps")
 
@@ -103,7 +90,7 @@ export default function DeployPage() {
   const canNext = (() => {
     switch (step) {
       case "project":
-        return projectName.trim().length >= 2 && !!useCase && targetUser.trim().length >= 2 && !!tone
+        return projectName.trim().length >= 2 && !!useCase
       case "interface":
         return !!interfaceKind && !!deploymentTarget && !!selectedRegion
       case "plan":
@@ -142,9 +129,9 @@ export default function DeployPage() {
           sshPublicKey: sshKey || undefined,
           agentConfig: {
             use_case: useCase,
-            target_user: targetUser.trim(),
+            target_user: "",
             core_actions: coreActions,
-            tone,
+            tone: "friendly",
             interface: interfaceKind,
             deployment_target: deploymentTarget,
             knowledge_source: "none",
@@ -217,7 +204,7 @@ export default function DeployPage() {
           <div className="space-y-6">
             <div>
               <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">Project</h2>
-              <p className="text-sm text-[var(--text-secondary)]">Name your agent, pick a use case, and define its audience.</p>
+              <p className="text-sm text-[var(--text-secondary)]">Name your agent and pick a use case.</p>
             </div>
 
             <div>
@@ -241,36 +228,6 @@ export default function DeployPage() {
               )}
             </div>
 
-            <div className="border border-[var(--accent-color)]/40 bg-[var(--accent-dim)]/30 p-4">
-              <p className="text-[10px] uppercase tracking-[0.1em] font-mono text-[var(--accent-color)] mb-3">
-                Quick start · pick a template
-              </p>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                {DEPLOY_TEMPLATES.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => {
-                      setUseCase(t.useCase)
-                      setTone(t.tone as Tone)
-                      const cat = AGENT_CATEGORIES.find((c) => c.slug === t.useCase)
-                      if (!targetUser) setTargetUser(cat?.description.split(".")[0] ?? "")
-                      toast.success(`${t.name} template applied`)
-                    }}
-                    className="flex items-start gap-3 p-3 border border-[var(--border-color)] bg-[var(--card-bg)] hover:border-[var(--accent-color)] text-left transition-all"
-                  >
-                    <span className="text-xl">{t.icon}</span>
-                    <div>
-                      <p className="text-[var(--text-primary)] text-sm font-medium">{t.name}</p>
-                      <p className="text-[var(--text-secondary)] text-[11px] mt-0.5 line-clamp-2">{t.tagline}</p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-              <p className="text-[10px] font-mono text-[var(--text-secondary)] mt-3">
-                Templates pre-fill the rest — you can still edit anything before deploying.
-              </p>
-            </div>
-
             <div>
               <label className="block text-xs uppercase tracking-wide text-[var(--text-secondary)] mb-2">Use Case</label>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
@@ -286,37 +243,6 @@ export default function DeployPage() {
                   >
                     <p className="text-[var(--text-primary)] font-medium text-sm">{cat.name}</p>
                     <p className="text-[var(--text-secondary)] text-xs mt-1 line-clamp-2">{cat.description}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs uppercase tracking-wide text-[var(--text-secondary)] mb-2">Target User</label>
-              <input
-                type="text"
-                value={targetUser}
-                onChange={(e) => setTargetUser(e.target.value)}
-                placeholder="e.g. SaaS customers, internal devs, enterprise buyers"
-                className="w-full bg-[var(--card-bg)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/50 focus:outline-none focus:border-[var(--accent-color)]/50 transition-colors"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs uppercase tracking-wide text-[var(--text-secondary)] mb-2">Tone <span className="text-[var(--text-secondary)] normal-case">· how the bot behaves</span></label>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                {TONES.map((t) => (
-                  <button
-                    key={t.value}
-                    onClick={() => setTone(t.value)}
-                    className={`w-full p-3 rounded-xl border text-left transition-all ${
-                      tone === t.value
-                        ? "border-[var(--accent-color)] bg-[var(--accent-dim)]"
-                        : "border-[var(--border-color)] bg-[var(--card-bg)] hover:border-[var(--accent-color)]"
-                    }`}
-                  >
-                    <p className="text-[var(--text-primary)] text-sm font-medium">{t.label}</p>
-                    <p className="text-[var(--text-secondary)] text-xs">{t.hint}</p>
                   </button>
                 ))}
               </div>
@@ -640,9 +566,7 @@ export default function DeployPage() {
                 <p className="text-[var(--accent-color)] text-xs uppercase tracking-wide mb-2 font-mono">Agent</p>
                 <p className="text-[var(--text-primary)] font-medium">{selectedCategoryObj?.name ?? "—"}</p>
                 <p className="text-[var(--text-secondary)] text-xs mt-1">
-                  For: {targetUser || "—"} ·
-                  <span className="ml-1">Tone: <span className="text-[var(--text-primary)] capitalize">{tone}</span></span> ·
-                  <span className="ml-1">Interface: <span className="text-[var(--text-primary)] capitalize">{interfaceKind}</span></span> ·
+                  Interface: <span className="text-[var(--text-primary)] capitalize">{interfaceKind}</span> ·
                   <span className="ml-1">Deploy: <span className="text-[var(--text-primary)] capitalize">{deploymentTarget}</span></span>
                 </p>
                 {coreActions.length > 0 && (

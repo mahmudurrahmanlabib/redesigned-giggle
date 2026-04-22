@@ -46,7 +46,7 @@ export const REGIONS: readonly RegionConfig[] = [
     name: "London",
     country: "United Kingdom",
     flag: "\u{1F1EC}\u{1F1E7}",
-    available: true,
+    available: false,
     sortOrder: 40,
     linodeRegion: "eu-west",
   },
