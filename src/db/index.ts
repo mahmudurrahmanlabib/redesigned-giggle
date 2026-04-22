@@ -45,4 +45,23 @@ if (process.env.NODE_ENV !== "production") {
 // Re-export the schema so call sites can do:
 //   import { db, users, instances, eq } from "@/db"
 export * from "./schema"
-export { eq, and, or, not, desc, asc, inArray, notInArray, gt, gte, lt, lte, like, ilike, isNull, isNotNull, sql } from "drizzle-orm"
+export {
+  eq,
+  and,
+  or,
+  not,
+  ne,
+  desc,
+  asc,
+  inArray,
+  notInArray,
+  gt,
+  gte,
+  lt,
+  lte,
+  like,
+  ilike,
+  isNull,
+  isNotNull,
+  sql,
+} from "drizzle-orm"

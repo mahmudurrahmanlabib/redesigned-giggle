@@ -1,4 +1,5 @@
 import { NodeSSH } from "node-ssh"
+import { OPENCLAW_VERSION } from "@/lib/openclaw"
 
 export type SshTarget = {
   host: string
@@ -37,6 +38,64 @@ export async function sshRun(target: SshTarget, command: string): Promise<SshRun
   }
 }
 
+export type SshStepResult = {
+  stage: string
+  command: string
+  stdout: string
+  stderr: string
+  exitCode: number | null
+  durationMs: number
+  timestamp: string
+}
+
+/**
+ * Instrumented SSH command runner. Wraps `sshRun` and captures structured
+ * timing/output metadata for every command executed during provisioning.
+ */
+export async function sshRunLogged(
+  target: SshTarget,
+  command: string,
+  stage: string,
+): Promise<SshStepResult> {
+  const start = Date.now()
+  const result = await sshRun(target, command)
+  return {
+    stage,
+    command,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exitCode: result.code,
+    durationMs: Date.now() - start,
+    timestamp: new Date().toISOString(),
+  }
+}
+
+/**
+ * Poll until sshd is accepting connections. The Linode API reports
+ * "running" before sshd binds, so this bridges the gap.
+ */
+export async function sshWaitReady(
+  target: SshTarget,
+  timeoutMs = 120_000,
+  pollMs = 5_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  let lastErr: unknown
+  while (Date.now() < deadline) {
+    try {
+      const r = await sshRun(target, "echo ok")
+      if (r.code === 0) return
+    } catch (err) {
+      lastErr = err
+    }
+    await new Promise((r) => setTimeout(r, pollMs))
+  }
+  throw new Error(
+    `SSH not ready on ${target.host} within ${timeoutMs}ms` +
+      (lastErr ? `; last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}` : ""),
+  )
+}
+
 function shellEscape(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
@@ -44,6 +103,7 @@ function shellEscape(value: string): string {
 /**
  * Wait for StackScript to finish installing OpenClaw.
  * Polls `openclaw --version` over SSH until it succeeds or timeout.
+ * If the poll times out, attempts a fresh npm install as fallback.
  */
 export async function sshWaitForOpenclaw(
   target: SshTarget,
@@ -61,10 +121,39 @@ export async function sshWaitForOpenclaw(
     }
     await new Promise((r) => setTimeout(r, pollMs))
   }
+
+  // Fallback: StackScript install may have failed. Retry via SSH.
+  const ver = OPENCLAW_VERSION()
+  const installCmd = `SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install -g openclaw@${shellEscape(ver)}`
+  try {
+    const installResult = await sshRun(target, installCmd)
+    if (installResult.code === 0 || installResult.code === null) {
+      const verify = await sshRun(target, "command -v openclaw >/dev/null && openclaw --version")
+      if (verify.code === 0) return
+    }
+  } catch (installErr) {
+    lastErr = installErr
+  }
+
   throw new Error(
-    `openclaw never became available on ${target.host} within ${timeoutMs}ms` +
-      (lastErr ? `; last ssh error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}` : ""),
+    `openclaw never became available on ${target.host} within ${timeoutMs}ms (npm fallback also failed)` +
+      (lastErr ? `; last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}` : ""),
   )
+}
+
+/**
+ * Idempotently ensure the `openclaw` system user, working directory, and
+ * compile cache exist. The StackScript creates these in Phase 3, but if
+ * any earlier phase fails (`set -euxo pipefail`) the user is never created.
+ */
+export async function sshEnsureOpenclawUser(target: SshTarget): Promise<SshRunResult> {
+  return sshRun(target, [
+    "id openclaw >/dev/null 2>&1 || useradd --system --home-dir /opt/openclaw --shell /usr/sbin/nologin openclaw",
+    "mkdir -p /opt/openclaw",
+    "chown -R openclaw:openclaw /opt/openclaw",
+    "mkdir -p /var/tmp/openclaw-compile-cache",
+    "chown openclaw:openclaw /var/tmp/openclaw-compile-cache",
+  ].join(" && "))
 }
 
 /**
@@ -216,13 +305,14 @@ export async function sshWriteFile(
   return sshRun(target, cmd)
 }
 
-/** Idempotent ufw bootstrap: allow ssh/http/https and enable. */
+/** Idempotent ufw bootstrap: allow ssh/http/https/gateway and enable. */
 export async function sshConfigureUfw(target: SshTarget): Promise<SshRunResult> {
   const script = [
     "command -v ufw >/dev/null 2>&1 || (apt-get update -y && apt-get install -y ufw)",
     "ufw allow 22/tcp || true",
     "ufw allow 80/tcp || true",
     "ufw allow 443/tcp || true",
+    "ufw allow 18789/tcp || true",
     "yes | ufw enable || true",
   ].join(" && ")
   return sshRun(target, script)

@@ -45,7 +45,7 @@ export async function handleCheckoutSessionCompleted(
 
   const plan = metadata.planSlug
     ? await db.query.plans.findFirst({ where: eq(plans.slug, metadata.planSlug) })
-    : await db.query.plans.findFirst({ where: eq(plans.tier, "starter") })
+    : await db.query.plans.findFirst({ where: eq(plans.tier, "builder") })
 
   if (!plan) {
     console.warn("[stripe] No plan found for checkout session")

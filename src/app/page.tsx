@@ -4,7 +4,6 @@ import Link from "next/link"
 import { useState } from "react"
 import Navbar from "@/components/layout/navbar"
 import Footer from "@/components/layout/footer"
-import { PLANS } from "@/configs/plans"
 import { AGENT_CATEGORIES } from "@/configs/agent-categories"
 import { BRANDING } from "@/configs/branding"
 import { TerminalAnimation } from "@/components/marketing/terminal-animation"
@@ -13,6 +12,7 @@ import { SmartPlanner } from "@/components/marketing/smart-planner"
 import { DemoBooking } from "@/components/marketing/demo-booking"
 import { UpgradePath } from "@/components/marketing/upgrade-path"
 import { PlaygroundWidget } from "@/components/marketing/playground-widget"
+import { PricingMarketingSection } from "@/components/marketing/pricing"
 import {
   Rocket,
   Shield,
@@ -24,7 +24,6 @@ import {
   GitBranch,
   Cpu,
   ChevronDown,
-  Check,
 } from "lucide-react"
 
 const features = [
@@ -75,7 +74,7 @@ const faqs = [
   },
   {
     q: "How is pricing structured?",
-    a: "We offer three tiers: Starter ($5/mo for 1 agent), Pro ($29/mo for up to 10 agents), and Enterprise ($199/mo for unlimited agents with dedicated support). All plans include monitoring and health checks.",
+    a: "Plans are credit-based: Free to try, then Builder ($79/mo), Operator ($199/mo), and Scale ($399/mo), with Enterprise from $1,000+/mo for dedicated infrastructure. Credits cover AI usage, workflows, automations, and vector search. Buy overage packs or add-ons as you grow.",
   },
   {
     q: "Can I get a custom AI system built for my business?",
@@ -297,80 +296,7 @@ export default function Home() {
 
         {/* ─── PRICING ─── */}
         <section id="pricing" className="py-24">
-          <div className="max-w-[1400px] mx-auto px-8">
-            <div className="border-l-4 border-[var(--accent-color)] pl-8 mb-12 max-w-[800px]">
-              <h2 className="font-[var(--font-display)] text-[clamp(2rem,4vw,3.5rem)] font-bold uppercase tracking-[0.02em] text-[var(--text-primary)] mb-2">
-                Simple, Transparent Pricing
-              </h2>
-              <p className="text-[var(--text-secondary)] text-lg">
-                Start small, scale as you grow. No hidden fees.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {PLANS.map((plan) => (
-                <div
-                  key={plan.slug}
-                  className={`relative border p-8 transition-all duration-300 hover:-translate-y-1 ${
-                    plan.highlight
-                      ? "border-[var(--accent-color)] bg-[rgba(204,255,0,0.03)]"
-                      : "border-[var(--border-color)] bg-[var(--card-bg)]"
-                  }`}
-                >
-                  {plan.highlight && (
-                    <div className="absolute -top-3 left-6 bg-[var(--accent-color)] text-black font-[var(--font-mono)] text-xs font-bold uppercase tracking-widest px-3 py-1">
-                      Most Popular
-                    </div>
-                  )}
-
-                  <h3 className="font-[var(--font-display)] text-2xl font-bold uppercase text-[var(--text-primary)] mb-1">
-                    {plan.name}
-                  </h3>
-                  <p className="text-[var(--text-secondary)] text-sm mb-4">
-                    {plan.description}
-                  </p>
-
-                  <div className="mb-6">
-                    <span className="font-[var(--font-display)] text-4xl font-bold text-[var(--text-primary)]">
-                      ${plan.displayPriceMonthly}
-                    </span>
-                    <span className="text-[var(--text-secondary)] text-sm">/mo</span>
-                  </div>
-
-                  <ul className="space-y-3 mb-8">
-                    {plan.features.map((f) => (
-                      <li key={f} className="flex items-start gap-3 text-sm">
-                        <Check className="w-4 h-4 text-[var(--accent-color)] shrink-0 mt-0.5" />
-                        <span className="text-[var(--text-secondary)]">{f}</span>
-                      </li>
-                    ))}
-                  </ul>
-
-                  {plan.tier === "enterprise" ? (
-                    <a
-                      href={BRANDING.demoUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="block text-center border border-[var(--border-color)] text-[var(--text-primary)] font-[var(--font-mono)] font-bold text-sm uppercase tracking-wider px-6 py-3 hover:border-[var(--accent-color)] hover:text-[var(--accent-color)] transition-all"
-                    >
-                      Book a Demo
-                    </a>
-                  ) : (
-                    <Link
-                      href="/login?deploy=true"
-                      className={`block text-center font-[var(--font-mono)] font-bold text-sm uppercase tracking-wider px-6 py-3 transition-all ${
-                        plan.highlight
-                          ? "bg-[var(--accent-color)] text-black hover:bg-white"
-                          : "border border-[var(--border-color)] text-[var(--text-primary)] hover:border-[var(--accent-color)] hover:text-[var(--accent-color)]"
-                      }`}
-                    >
-                      Get Started
-                    </Link>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
+          <PricingMarketingSection compact />
         </section>
 
         {/* ─── DEMO BOOKING ─── */}

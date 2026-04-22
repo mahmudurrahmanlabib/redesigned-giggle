@@ -18,6 +18,9 @@ type InstanceLite = {
   tlsStatus: string | null
   openclawAdminEmail: string | null
   hasOpenclawPassword: boolean
+  hasRootPassword: boolean
+  hasGatewayToken: boolean
+  deploymentTarget: string | null
 }
 
 type LogLite = { id: string; level: string; message: string; createdAt: string }
@@ -385,6 +388,68 @@ function Row({
   )
 }
 
+/* ───────────── SERVER ACCESS CARD ───────────── */
+function ServerAccessCard({ instanceId, ipAddress }: { instanceId: string; ipAddress: string | null }) {
+  const [revealed, setRevealed] = useState<{
+    rootPassword: string | null
+    sshCommand: string | null
+    gatewayUrl: string | null
+  } | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  async function reveal() {
+    setLoading(true)
+    try {
+      const r = await fetch(`/api/instances/${instanceId}/credentials`, { cache: "no-store" })
+      const j = await r.json()
+      if (r.ok) {
+        setRevealed({
+          rootPassword: j.rootPassword,
+          sshCommand: j.sshCommand,
+          gatewayUrl: j.gatewayUrl,
+        })
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function copy(text: string) {
+    try { await navigator.clipboard.writeText(text) } catch { /* ignore */ }
+  }
+
+  return (
+    <Card title="Server Access">
+      {!revealed ? (
+        <div className="space-y-2">
+          <p className="text-sm text-[var(--text-secondary)]">
+            SSH access and gateway URL for this server.
+          </p>
+          <button
+            onClick={reveal}
+            disabled={loading}
+            className="px-4 py-2 text-xs uppercase tracking-[0.08em] font-mono bg-[var(--accent-dim)] text-[var(--accent-color)] border border-[var(--accent-color)]/40 hover:bg-[var(--accent-color)]/20 disabled:opacity-50"
+          >
+            {loading ? "Loading…" : "Reveal Access Details"}
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-2 text-sm">
+          {revealed.sshCommand && (
+            <Row label="SSH" value={revealed.sshCommand} onCopy={() => copy(revealed.sshCommand!)} mono />
+          )}
+          {revealed.rootPassword && (
+            <Row label="Root Pass" value={revealed.rootPassword} onCopy={() => copy(revealed.rootPassword!)} mono />
+          )}
+          {revealed.gatewayUrl && (
+            <Row label="Gateway" value={revealed.gatewayUrl} onCopy={() => copy(revealed.gatewayUrl!)} mono />
+          )}
+        </div>
+      )}
+    </Card>
+  )
+}
+
 /* ───────────── PROVISIONING CARD ───────────── */
 const PROVISION_STEPS = [
   { key: "Creating Linode VM", label: "Creating VM" },
@@ -480,6 +545,9 @@ function OverviewTab({ instance, logs }: { instance: InstanceLite; logs: LogLite
           ipAddress={instance.ipAddress}
         />
       )}
+      {instance.hasRootPassword && instance.status === "running" && (
+        <ServerAccessCard instanceId={instance.id} ipAddress={instance.ipAddress} />
+      )}
 
       <Card title="Deployment">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -559,22 +627,31 @@ function ControlsTab({ instance }: { instance: InstanceLite }) {
     }
   }
 
+  const isVps = instance.deploymentTarget === "vps"
+
   async function revealToken() {
     setTokenLoading(true)
     try {
-      const r = await fetch(`/api/instances/${instance.id}/token`, { method: "GET" })
-      const j = (await r.json()) as { botToken?: string | null; error?: string }
+      const endpoint = isVps
+        ? `/api/instances/${instance.id}/gateway-token`
+        : `/api/instances/${instance.id}/token`
+      const r = await fetch(endpoint, { method: "GET" })
+      const j = await r.json()
       if (!r.ok) {
         flash(j.error || "Failed to reveal token")
         return
       }
-      setTokenRevealed(j.botToken ?? "(not yet assigned)")
+      setTokenRevealed(isVps ? j.gatewayToken : j.botToken ?? "(not yet assigned)")
     } finally {
       setTokenLoading(false)
     }
   }
 
   async function rotateToken() {
+    if (isVps) {
+      flash("Gateway token rotation is not supported yet.")
+      return
+    }
     setTokenLoading(true)
     try {
       const r = await fetch(`/api/instances/${instance.id}/token`, { method: "POST" })
@@ -625,9 +702,14 @@ function ControlsTab({ instance }: { instance: InstanceLite }) {
           </button>
         </div>
       </Card>
-      <Card title="Bot Token">
+      <Card title={isVps ? "Gateway Token" : "Bot Token"}>
+        <p className="text-xs text-[var(--text-secondary)] mb-2">
+          {isVps
+            ? "Use this token to authenticate with the OpenClaw Control UI and API."
+            : "API token for programmatic access to this bot."}
+        </p>
         <p className="font-mono text-sm text-[var(--text-primary)] break-all bg-[var(--code-bg)] border border-[var(--border-color)] p-3">
-          {tokenRevealed ?? `sk_bot_•••••••••••••••••••••••••${instance.id.slice(-6)}`}
+          {tokenRevealed ?? (isVps ? "gw_•••••••••••••••••••••" : `sk_bot_•••••••••••••••••••••••••${instance.id.slice(-6)}`)}
         </p>
         <div className="flex gap-2 mt-3">
           <button
@@ -637,13 +719,15 @@ function ControlsTab({ instance }: { instance: InstanceLite }) {
           >
             {tokenLoading ? "…" : "Reveal"}
           </button>
-          <button
-            onClick={rotateToken}
-            disabled={tokenLoading}
-            className="px-3 py-1.5 text-xs uppercase tracking-[0.08em] bg-[var(--card-bg)] text-[var(--text-primary)] border border-[var(--border-color)] hover:border-[var(--accent-color)] font-mono disabled:opacity-50"
-          >
-            Rotate
-          </button>
+          {!isVps && (
+            <button
+              onClick={rotateToken}
+              disabled={tokenLoading}
+              className="px-3 py-1.5 text-xs uppercase tracking-[0.08em] bg-[var(--card-bg)] text-[var(--text-primary)] border border-[var(--border-color)] hover:border-[var(--accent-color)] font-mono disabled:opacity-50"
+            >
+              Rotate
+            </button>
+          )}
           {tokenRevealed && (
             <button
               onClick={copyToken}
@@ -654,12 +738,77 @@ function ControlsTab({ instance }: { instance: InstanceLite }) {
           )}
         </div>
       </Card>
+      {isVps && <DomainManageCard instance={instance} onFlash={flash} />}
       {toast && (
         <div className="md:col-span-2 px-4 py-2 text-xs font-mono text-[var(--text-primary)] bg-[var(--card-bg)] border border-[var(--accent-color)]/40">
           {toast}
         </div>
       )}
     </div>
+  )
+}
+
+/* ───────────── DOMAIN MANAGEMENT CARD ───────────── */
+function DomainManageCard({
+  instance,
+  onFlash,
+}: {
+  instance: InstanceLite
+  onFlash: (msg: string) => void
+}) {
+  const [domain, setDomain] = useState(instance.domain ?? "")
+  const [saving, setSaving] = useState(false)
+  const router = useRouter()
+
+  async function saveDomain() {
+    setSaving(true)
+    try {
+      const r = await fetch(`/api/instances/${instance.id}/domain`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain: domain.trim() || null }),
+      })
+      const j = await r.json()
+      if (!r.ok) {
+        onFlash(j.error || "Failed to update domain")
+        return
+      }
+      onFlash(domain.trim() ? `Domain set to ${domain.trim()}. Configure DNS A record → ${instance.ipAddress}` : "Domain removed.")
+      router.refresh()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card title="Custom Domain">
+      <p className="text-xs text-[var(--text-secondary)] mb-2">
+        {instance.domain
+          ? `Currently configured: ${instance.domain}`
+          : "No custom domain. Access via IP only."}
+      </p>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={domain}
+          onChange={(e) => setDomain(e.target.value)}
+          placeholder="example.com"
+          className="flex-1 bg-[var(--code-bg)] border border-[var(--border-color)] px-3 py-2 font-mono text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-color)]"
+        />
+        <button
+          onClick={saveDomain}
+          disabled={saving}
+          className="px-4 py-2 text-xs uppercase tracking-[0.08em] font-mono bg-[var(--accent-dim)] text-[var(--accent-color)] border border-[var(--accent-color)]/40 hover:bg-[var(--accent-color)]/20 disabled:opacity-50"
+        >
+          {saving ? "…" : "Save"}
+        </button>
+      </div>
+      {instance.domain && instance.ipAddress && (
+        <p className="text-[10px] font-mono text-[var(--text-secondary)] mt-2">
+          Point <span className="text-[var(--text-primary)]">{instance.domain}</span> A record → <span className="text-[var(--accent-color)]">{instance.ipAddress}</span>
+        </p>
+      )}
+    </Card>
   )
 }
 

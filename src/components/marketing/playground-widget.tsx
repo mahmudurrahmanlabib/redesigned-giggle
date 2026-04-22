@@ -8,7 +8,7 @@ const CANNED: Record<string, string> = {
   default: "I'm a demo bot. Sign up to deploy your own — I can triage tickets, qualify leads, summarize logs, and more.",
   hello: "Hi! Ask me what SovereignML can do, or try: 'deploy a support bot'.",
   deploy: "Deploying a support bot takes ~90s. Pick template → choose region → pay → done. Want to try?",
-  price: "From $0 (free tier) up to $299/mo for dedicated VPS + Claude Opus. Credits pay-as-you-go on top.",
+  price: "Plans from Free (100 credits) to Builder ($79/mo) through Scale ($399/mo), plus Enterprise from $1,000+/mo. Credits cover AI usage and workflows; buy overage packs when you need more.",
 }
 
 function reply(q: string): string {

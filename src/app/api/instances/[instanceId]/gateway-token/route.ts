@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/auth"
-import { db, instances, instanceLogs, eq } from "@/db"
+import { db, instances, eq } from "@/db"
 import { whereUserInstanceVisible } from "@/lib/instance-queries"
-import { restartBot } from "@/lib/provisioner"
+import { decryptSecret } from "@/lib/crypto-secret"
 
-export async function POST(
+export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ instanceId: string }> }
 ) {
@@ -15,11 +15,9 @@ export async function POST(
 
   const { instanceId } = await params
   const isAdmin = (session.user as { role?: string }).role === "admin"
-
   const instance = await db.query.instances.findFirst({
     where: isAdmin ? eq(instances.id, instanceId) : whereUserInstanceVisible(session.user.id, instanceId),
   })
-
   if (!instance) {
     return NextResponse.json({ error: "Instance not found" }, { status: 404 })
   }
@@ -30,30 +28,19 @@ export async function POST(
     return NextResponse.json({ error: "Instance not found" }, { status: 404 })
   }
 
-  if (instance.status !== "running" && instance.status !== "stopped") {
+  if (!instance.gatewayTokenEnc) {
     return NextResponse.json(
-      { error: `Cannot restart instance in ${instance.status} state` },
-      { status: 400 }
+      { error: "Gateway token not yet available. Provisioning may still be in progress." },
+      { status: 409 }
     )
   }
 
+  let gatewayToken: string
   try {
-    await restartBot(instance)
-  } catch (err) {
-    console.error(`[restart] failed for ${instanceId}:`, err)
-    await db.insert(instanceLogs).values({
-      instanceId,
-      level: "error",
-      message: `Restart failed: ${err instanceof Error ? err.message : String(err)}`,
-    })
-    return NextResponse.json({ error: "Restart failed" }, { status: 500 })
+    gatewayToken = decryptSecret(instance.gatewayTokenEnc)
+  } catch {
+    return NextResponse.json({ error: "Failed to decrypt gateway token" }, { status: 500 })
   }
 
-  await db.insert(instanceLogs).values({
-    instanceId,
-    level: "info",
-    message: `Instance restarted by ${isAdmin ? "admin" : "user"}.`,
-  })
-
-  return NextResponse.json({ success: true })
+  return NextResponse.json({ gatewayToken })
 }

@@ -7,7 +7,6 @@ import {
 } from "@/lib/instance-state"
 import { allocatePort, FleetEmptyError, FleetFullError, pickHost } from "@/lib/host-scheduler"
 import {
-  sshConfigureUfw,
   sshDockerRestart,
   sshDockerRm,
   sshDockerRun,
@@ -15,14 +14,16 @@ import {
   sshDockerStop,
   sshInstallCaddyfile,
   sshRun,
+  sshRunLogged,
   sshSystemctlEnable,
   sshSystemctlRestart,
   sshSystemctlStart,
   sshSystemctlStatus,
   sshSystemctlStop,
-  sshValidateOpenclawBinary,
   sshWaitForOpenclaw,
+  sshWaitReady,
   sshWriteFile,
+  type SshTarget,
 } from "@/lib/ssh"
 import { decryptSecret, encryptSecret } from "@/lib/crypto-secret"
 import {
@@ -283,6 +284,103 @@ async function provisionSharedBot(instance: Instance): Promise<ProvisionResult> 
 /* VPS provisioning (native OpenClaw + systemd + Caddy)                */
 /* ------------------------------------------------------------------ */
 
+const VPS_STAGES = [
+  "create_vm",
+  "wait_boot",
+  "waiting_ssh",
+  "validating_binary",
+  "writing_config",
+  "installing_service",
+  "starting_service",
+  "health_check",
+  "commit",
+] as const
+type VpsStage = (typeof VPS_STAGES)[number]
+
+async function setProvisionStage(instanceId: string, stage: VpsStage): Promise<void> {
+  await db
+    .update(instances)
+    .set({ provisionStage: stage })
+    .where(eq(instances.id, instanceId))
+  await logInstanceEvent({
+    instanceId,
+    stage,
+    action: "stage_enter",
+    message: `Entering stage: ${stage}`,
+  })
+}
+
+/**
+ * Log every SSH step result to the instance log for full observability.
+ */
+async function logSshStep(
+  instanceId: string,
+  step: Awaited<ReturnType<typeof sshRunLogged>>,
+): Promise<void> {
+  const ok = step.exitCode === 0 || step.exitCode === null
+  await logInstanceEvent({
+    instanceId,
+    level: ok ? "info" : "warn",
+    stage: step.stage,
+    action: "ssh_exec",
+    result: ok ? "ok" : "error",
+    durationMs: step.durationMs,
+    detail: {
+      command: step.command,
+      exitCode: step.exitCode,
+      stdout: step.stdout.slice(0, 4000),
+      stderr: step.stderr.slice(0, 4000),
+    },
+    message: ok
+      ? `SSH OK (${step.durationMs}ms): ${step.command.slice(0, 120)}`
+      : `SSH FAIL exit=${step.exitCode} (${step.durationMs}ms): ${step.command.slice(0, 120)}`,
+  })
+}
+
+/**
+ * Collect diagnostic logs from the VM for failure analysis.
+ * Best-effort — individual commands may fail if SSH is unreachable.
+ */
+async function collectDiagnostics(
+  target: SshTarget,
+  instanceId: string,
+): Promise<void> {
+  const commands: [string, string][] = [
+    [`journalctl -u ${OPENCLAW_SERVICE_NAME} --no-pager -n 200`, "journal"],
+    [`systemctl status ${OPENCLAW_SERVICE_NAME} --no-pager`, "service_status"],
+    ["cat /opt/openclaw/.env 2>/dev/null | grep -v API_KEY | grep -v PASSWORD", "env_sanitized"],
+    ["ls -la /opt/openclaw/", "workdir_listing"],
+    ["which openclaw 2>/dev/null || echo 'not found'", "binary_path"],
+    ["node -v 2>/dev/null || echo 'node not found'", "node_version"],
+  ]
+  for (const [cmd, label] of commands) {
+    try {
+      const result = await sshRun(target, cmd)
+      await logInstanceEvent({
+        instanceId,
+        level: "error",
+        stage: "diagnostics",
+        action: label,
+        detail: {
+          stdout: result.stdout.slice(0, 8000),
+          stderr: result.stderr.slice(0, 4000),
+          code: result.code,
+        },
+        message: `Diagnostic [${label}]`,
+      })
+    } catch {
+      await logInstanceEvent({
+        instanceId,
+        level: "error",
+        stage: "diagnostics",
+        action: label,
+        result: "error",
+        message: `Diagnostic [${label}]: SSH unreachable`,
+      })
+    }
+  }
+}
+
 async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
   const [region, serverConfig] = await Promise.all([
     db.query.regions.findFirst({ where: eq(regions.id, instance.regionId) }),
@@ -293,11 +391,12 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
 
   let linodeId: number | undefined = instance.linodeId ?? undefined
   let ipAddress: string | undefined = instance.ipAddress ?? undefined
-  let currentStage = "init"
+  let currentStage: VpsStage = "create_vm"
 
   try {
     /* --- 1. Create Linode VM ---------------------------------------- */
     currentStage = "create_vm"
+    await setProvisionStage(instance.id, currentStage)
     if (!linodeId) {
       await logInstanceEvent({
         instanceId: instance.id,
@@ -308,11 +407,12 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       const stackScriptId = await ensureSharedHostStackScript()
       const publicKey = process.env.SSH_FLEET_PUBLIC_KEY
 
+      const rootPassword = generateRootPassword()
       const vm = await linodeCreateVM({
         label: `sovereign-vps-${instance.id.slice(0, 8)}`,
         type: linodePlan,
         region: linodeRegion,
-        root_pass: generateRootPassword(),
+        root_pass: rootPassword,
         stackscript_id: stackScriptId,
         stackscript_data: { ssh_public_key: publicKey ?? "" },
         authorized_keys: publicKey ? [publicKey] : undefined,
@@ -320,11 +420,9 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       })
       linodeId = vm.id
 
-      // PERSIST IMMEDIATELY — the reconciler needs to see this linodeId even
-      // if we crash before the VM boots. This closes the orphan window.
       await db
         .update(instances)
-        .set({ linodeId })
+        .set({ linodeId, rootPasswordEnc: encryptSecret(rootPassword) })
         .where(eq(instances.id, instance.id))
 
       await logInstanceEvent({
@@ -337,7 +435,9 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       })
     }
 
+    /* --- 2. Wait for boot ------------------------------------------- */
     currentStage = "wait_boot"
+    await setProvisionStage(instance.id, currentStage)
     if (!ipAddress) {
       ipAddress = await waitForLinodeRunning(linodeId!)
       await db
@@ -346,24 +446,59 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
         .where(eq(instances.id, instance.id))
     }
 
-    const target = { host: ipAddress }
+    const target: SshTarget = { host: ipAddress }
 
-    /* --- 2. Wait for StackScript / binary ---------------------------- */
-    currentStage = "openclaw_binary"
+    /* --- 3. Wait for SSH readiness ---------------------------------- */
+    currentStage = "waiting_ssh"
+    await setProvisionStage(instance.id, currentStage)
     await logInstanceEvent({
       instanceId: instance.id,
       stage: currentStage,
-      message: `Server online at ${ipAddress}. Waiting for OpenClaw...`,
+      message: `Server online at ${ipAddress}. Waiting for SSH...`,
+    })
+    await sshWaitReady(target)
+
+    /* --- 4. Validate OpenClaw binary -------------------------------- */
+    currentStage = "validating_binary"
+    await setProvisionStage(instance.id, currentStage)
+    await logInstanceEvent({
+      instanceId: instance.id,
+      stage: currentStage,
+      message: "Waiting for OpenClaw binary (StackScript install or SSH fallback)...",
     })
     await sshWaitForOpenclaw(target)
-    await sshValidateOpenclawBinary(target, OPENCLAW_GATEWAY_PORT)
 
-    /* --- 3. Firewall ------------------------------------------------- */
-    currentStage = "firewall"
-    await sshConfigureUfw(target)
+    // Ensure the openclaw user/dirs exist — StackScript may have aborted before Phase 3
+    const userStep = await sshRunLogged(
+      target,
+      "id openclaw >/dev/null 2>&1 || useradd --system --home-dir /opt/openclaw --shell /usr/sbin/nologin openclaw && mkdir -p /opt/openclaw && chown -R openclaw:openclaw /opt/openclaw && mkdir -p /var/tmp/openclaw-compile-cache && chown openclaw:openclaw /var/tmp/openclaw-compile-cache",
+      currentStage,
+    )
+    await logSshStep(instance.id, userStep)
+    if (userStep.exitCode !== 0 && userStep.exitCode !== null) {
+      throw new Error(`Failed to ensure openclaw user: ${userStep.stderr}`)
+    }
 
-    /* --- 4. Credentials ---------------------------------------------- */
-    currentStage = "credentials"
+    const versionStep = await sshRunLogged(target, "openclaw --version", currentStage)
+    await logSshStep(instance.id, versionStep)
+    if (versionStep.exitCode !== 0 && versionStep.exitCode !== null) {
+      throw new Error(
+        `openclaw --version failed (exit ${versionStep.exitCode}): ${versionStep.stderr || versionStep.stdout}`,
+      )
+    }
+
+    const whichStep = await sshRunLogged(target, "which openclaw", currentStage)
+    await logSshStep(instance.id, whichStep)
+
+    await logInstanceEvent({
+      instanceId: instance.id,
+      stage: currentStage,
+      action: "binary_validated",
+      result: "ok",
+      message: `OpenClaw binary validated: ${versionStep.stdout.trim()}`,
+    })
+
+    /* --- 5. Credentials --------------------------------------------- */
     const adminEmail =
       instance.openclawAdminEmail ??
       `admin+${instance.id.slice(0, 8)}@openclaw.local`
@@ -374,78 +509,194 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     const tier = (instance.modelTier ?? "mid") as BudgetTier
     const route = routeModel(tier)
 
-    /* --- 5. Config + env ---------------------------------------------- */
-    currentStage = "write_config"
+    /* --- 6. Write .env ---------------------------------------------- */
+    currentStage = "writing_config"
+    await setProvisionStage(instance.id, currentStage)
     await logInstanceEvent({
       instanceId: instance.id,
       stage: currentStage,
       message: "Writing OpenClaw configuration...",
     })
+
     const env = buildOpenclawEnv({
       instance: { ...instance, openclawAdminEmail: adminEmail },
       adminEmail,
       adminPassword,
       openRouterApiKey: OPENROUTER_API_KEY(),
     })
-    await sshWriteFile(
+
+    const envContent = renderEnvFile(env)
+    const envB64 = Buffer.from(envContent, "utf8").toString("base64")
+    const envStep = await sshRunLogged(
       target,
-      `${OPENCLAW_DIR}/config.json5`,
-      renderOpenclawConfig({
-        gatewayToken,
-        openRouterApiKey: OPENROUTER_API_KEY(),
-        model: route.model,
-        fallbackModel: route.fallback,
-        soulMd: instance.soulMd,
-      }),
+      `echo '${envB64}' | base64 -d > '${OPENCLAW_DIR}/.env' && chmod 600 '${OPENCLAW_DIR}/.env' && chown openclaw:openclaw '${OPENCLAW_DIR}/.env'`,
+      currentStage,
     )
-    await sshWriteFile(target, `${OPENCLAW_DIR}/.env`, renderEnvFile(env), { mode: "600" })
+    await logSshStep(instance.id, envStep)
+    if (envStep.exitCode !== 0 && envStep.exitCode !== null) {
+      throw new Error(`Failed to write .env: ${envStep.stderr}`)
+    }
 
-    /* --- 6. Caddyfile ------------------------------------------------ */
-    currentStage = "caddy"
-    await sshInstallCaddyfile(target, renderCaddyfile({ domain: instance.domain }))
-
-    /* --- 7. Systemd + start ------------------------------------------ */
-    currentStage = "systemd"
-    await sshWriteFile(
+    /* --- 7. OpenClaw onboard (let it initialize its own config) ----- */
+    const onboardStep = await sshRunLogged(
       target,
-      `/etc/systemd/system/${OPENCLAW_SERVICE_NAME}.service`,
-      renderSystemdUnit(),
+      `sudo -u openclaw HOME=${OPENCLAW_DIR} /usr/bin/openclaw onboard --mode local --yes 2>&1`,
+      currentStage,
     )
-    await sshRun(target, "systemctl daemon-reload")
-    await sshSystemctlEnable(target, OPENCLAW_SERVICE_NAME)
-    await sshSystemctlStart(target, OPENCLAW_SERVICE_NAME)
+    await logSshStep(instance.id, onboardStep)
+    if (onboardStep.exitCode !== 0 && onboardStep.exitCode !== null) {
+      await logInstanceEvent({
+        instanceId: instance.id,
+        level: "warn",
+        stage: currentStage,
+        action: "onboard_failed",
+        message: `openclaw onboard failed (exit ${onboardStep.exitCode}), continuing with config set...`,
+      })
+    }
 
-    /* --- 8. Health gate ---------------------------------------------- */
+    /* --- 8. Overlay our settings via openclaw config set ------------ */
+    const configCmds = [
+      `openclaw config set gateway.port ${OPENCLAW_GATEWAY_PORT}`,
+      `openclaw config set gateway.bind lan`,
+      `openclaw config set gateway.auth.token ${JSON.stringify(gatewayToken)}`,
+      `openclaw config set gateway.controlUi.allowedOrigins '["*"]'`,
+      `openclaw config set agents.defaults.model.primary ${JSON.stringify(route.model)}`,
+      `openclaw config set agents.defaults.model.fallbacks '${JSON.stringify([route.fallback])}'`,
+    ]
+    for (const cmd of configCmds) {
+      const step = await sshRunLogged(
+        target,
+        `sudo -u openclaw HOME=${OPENCLAW_DIR} /usr/bin/${cmd} 2>&1`,
+        currentStage,
+      )
+      await logSshStep(instance.id, step)
+    }
+
+    // Doctor to validate final config (log only, don't fail)
+    const doctorStep = await sshRunLogged(
+      target,
+      `sudo -u openclaw HOME=${OPENCLAW_DIR} /usr/bin/openclaw doctor 2>&1 || true`,
+      currentStage,
+    )
+    await logSshStep(instance.id, doctorStep)
+
+    // Log the final config for debugging
+    const configDump = await sshRunLogged(
+      target,
+      `cat ${OPENCLAW_DIR}/.openclaw/openclaw.json 2>/dev/null || echo 'no config file'`,
+      currentStage,
+    )
+    await logSshStep(instance.id, configDump)
+
+    // Caddyfile
+    const caddyContent = renderCaddyfile({ domain: instance.domain })
+    const caddyB64 = Buffer.from(caddyContent, "utf8").toString("base64")
+    const caddyStep = await sshRunLogged(
+      target,
+      `echo '${caddyB64}' | base64 -d > /etc/caddy/Caddyfile && systemctl reload caddy 2>&1 || true`,
+      currentStage,
+    )
+    await logSshStep(instance.id, caddyStep)
+
+    /* --- 9. Systemd install ----------------------------------------- */
+    currentStage = "installing_service"
+    await setProvisionStage(instance.id, currentStage)
+
+    const unitContent = renderSystemdUnit()
+    const unitB64 = Buffer.from(unitContent, "utf8").toString("base64")
+    const unitStep = await sshRunLogged(
+      target,
+      `echo '${unitB64}' | base64 -d > '/etc/systemd/system/${OPENCLAW_SERVICE_NAME}.service'`,
+      currentStage,
+    )
+    await logSshStep(instance.id, unitStep)
+    if (unitStep.exitCode !== 0 && unitStep.exitCode !== null) {
+      throw new Error(`Failed to write systemd unit: ${unitStep.stderr}`)
+    }
+
+    const reloadStep = await sshRunLogged(target, "systemctl daemon-reload", currentStage)
+    await logSshStep(instance.id, reloadStep)
+
+    const enableStep = await sshRunLogged(
+      target,
+      `systemctl enable ${OPENCLAW_SERVICE_NAME}`,
+      currentStage,
+    )
+    await logSshStep(instance.id, enableStep)
+
+    /* --- 10. Start service ------------------------------------------ */
+    currentStage = "starting_service"
+    await setProvisionStage(instance.id, currentStage)
+
+    const startStep = await sshRunLogged(
+      target,
+      `systemctl start ${OPENCLAW_SERVICE_NAME}`,
+      currentStage,
+    )
+    await logSshStep(instance.id, startStep)
+
+    // Wait for the service to settle, then verify it's still alive (not crash-looping)
+    await new Promise((r) => setTimeout(r, 8_000))
+    const stableCheck = await sshRunLogged(
+      target,
+      `systemctl is-active ${OPENCLAW_SERVICE_NAME}`,
+      currentStage,
+    )
+    await logSshStep(instance.id, stableCheck)
+    if (stableCheck.stdout.trim() !== "active") {
+      const journalSnap = await sshRunLogged(
+        target,
+        `journalctl -u ${OPENCLAW_SERVICE_NAME} --no-pager -n 40`,
+        currentStage,
+      )
+      await logSshStep(instance.id, journalSnap)
+      throw new Error(
+        `${OPENCLAW_SERVICE_NAME} not stable after 8s (status: ${stableCheck.stdout.trim()})`,
+      )
+    }
+
+    /* --- 11. Health check: is port 18789 open? ---------------------- */
     currentStage = "health_check"
-    await new Promise((r) => setTimeout(r, 3_000))
-    const statusResult = await sshSystemctlStatus(target, OPENCLAW_SERVICE_NAME)
-    if (statusResult.stdout.trim() !== "active") {
-      const journal = await sshRun(
+    await setProvisionStage(instance.id, currentStage)
+
+    const portDeadline = Date.now() + 60_000
+    let portOpen = false
+    while (Date.now() < portDeadline) {
+      await new Promise((r) => setTimeout(r, 3_000))
+      const portStep = await sshRunLogged(
         target,
-        `journalctl -u ${OPENCLAW_SERVICE_NAME} -n 30 --no-pager`,
+        `ss -tlnp | grep ':${OPENCLAW_GATEWAY_PORT}' || true`,
+        currentStage,
       )
-      throw new Error(
-        `${OPENCLAW_SERVICE_NAME} not active (status: ${statusResult.stdout.trim()}). ` +
-          `Journal: ${journal.stdout || journal.stderr}`,
-      )
+      await logSshStep(instance.id, portStep)
+      if (portStep.stdout.includes(`:${OPENCLAW_GATEWAY_PORT}`)) {
+        portOpen = true
+        break
+      }
     }
-    const healthResult = await sshRun(
-      target,
-      `curl -sf http://127.0.0.1:${OPENCLAW_GATEWAY_PORT}/health`,
-    )
-    if (healthResult.code !== 0 && healthResult.code !== null) {
-      const journal = await sshRun(
+    if (!portOpen) {
+      const journalSnap = await sshRunLogged(
         target,
-        `journalctl -u ${OPENCLAW_SERVICE_NAME} -n 30 --no-pager`,
+        `journalctl -u ${OPENCLAW_SERVICE_NAME} --no-pager -n 50`,
+        currentStage,
       )
+      await logSshStep(instance.id, journalSnap)
       throw new Error(
-        `OpenClaw health check failed (curl exit ${healthResult.code}). ` +
-          `Journal: ${journal.stdout || journal.stderr}`,
+        `Port ${OPENCLAW_GATEWAY_PORT} never opened after 60s. Service may be crash-looping.`,
       )
     }
 
-    /* --- 9. Commit state --------------------------------------------- */
+    await logInstanceEvent({
+      instanceId: instance.id,
+      stage: currentStage,
+      action: "health_ok",
+      result: "ok",
+      message: `Port ${OPENCLAW_GATEWAY_PORT} is listening. OpenClaw is running.`,
+    })
+
+    /* --- 11. Commit state ------------------------------------------- */
     currentStage = "commit"
+    await setProvisionStage(instance.id, currentStage)
     await transitionInstance(instance.id, ["provisioning"], "running", {
       set: {
         ipAddress,
@@ -455,9 +706,11 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
         openclawAdminEmail: adminEmail,
         openclawAdminPasswordEnc:
           instance.openclawAdminPasswordEnc ?? encryptSecret(adminPassword),
-        // dns/tls remain NULL unless a domain is configured.
+        gatewayTokenEnc: encryptSecret(gatewayToken),
         dnsStatus: instance.domain ? "pending" : null,
         tlsStatus: instance.domain ? "pending" : null,
+        provisionStage: "commit",
+        failedStage: null,
         lastActiveAt: new Date(),
       },
     })
@@ -467,7 +720,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       result: "ok",
       message: `Deployment complete. Gateway at ${ipAddress}:${OPENCLAW_GATEWAY_PORT}${
         instance.domain ? ` (domain ${instance.domain})` : ""
-      }.`,
+      }. Direct access: http://${ipAddress}:${OPENCLAW_GATEWAY_PORT}`,
     })
 
     return {
@@ -478,6 +731,14 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       mocked: false,
     }
   } catch (err) {
+    // Collect diagnostics before rollback (best-effort)
+    if (ipAddress) {
+      try {
+        await collectDiagnostics({ host: ipAddress }, instance.id)
+      } catch {
+        // diagnostics collection itself failed — don't mask the original error
+      }
+    }
     await rollbackProvisioning(instance.id, linodeId, currentStage, err)
     throw err
   }
@@ -491,6 +752,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
  * 3. Transition to `failed_provisioning`. On delete success clear linodeId/ip
  *    so the row is clean. On delete failure keep the id so the reconciler
  *    picks it up on the next pass.
+ * 4. Persist `failedStage` on the instance row.
  */
 async function rollbackProvisioning(
   instanceId: string,
@@ -510,7 +772,17 @@ async function rollbackProvisioning(
   })
 
   let vmDeleted = false
-  if (linodeId) {
+  const keepVms = process.env.KEEP_FAILED_VMS === "true"
+  if (linodeId && keepVms) {
+    await logInstanceEvent({
+      instanceId,
+      level: "warn",
+      stage: "rollback",
+      action: "keep_vm",
+      detail: { linodeId },
+      message: `KEEP_FAILED_VMS=true — VM ${linodeId} preserved for debugging. Delete manually when done.`,
+    })
+  } else if (linodeId) {
     const backoffMs = [1_000, 4_000, 16_000]
     for (let i = 0; i < backoffMs.length; i++) {
       try {
@@ -534,12 +806,15 @@ async function rollbackProvisioning(
     }
   }
 
+  const setFields: Record<string, unknown> = { failedStage: stage }
+  if (vmDeleted) {
+    setFields.linodeId = null
+    setFields.ipAddress = null
+  }
+
   await transitionInstance(instanceId, ["provisioning"], "failed_provisioning", {
     error: reason,
-    set: vmDeleted
-      ? { linodeId: null, ipAddress: null }
-      : // keep linodeId for reconciler to sweep
-        {},
+    set: setFields,
   })
 
   await logInstanceEvent({
@@ -640,10 +915,10 @@ export type DeleteResult = { status: "deleted" | "pending"; linodeId?: number }
  */
 export async function deleteBot(instance: Instance): Promise<DeleteResult> {
   // Transition into `deleting`. Legal predecessors: running | stopped |
-  // failed_provisioning | provisioning. If already deleting/deleted, throws.
+  // failed_provisioning | provisioning | failed (legacy). If already deleting/deleted, throws.
   await transitionInstance(
     instance.id,
-    ["running", "stopped", "failed_provisioning", "provisioning"],
+    ["running", "stopped", "failed_provisioning", "provisioning", "failed"],
     "deleting",
     { bumpAttempts: "deletion" },
   )
@@ -804,7 +1079,7 @@ export async function reprovisionBotEnv(instance: Instance): Promise<void> {
 
     await sshWriteFile(
       target,
-      `${OPENCLAW_DIR}/config.json5`,
+      `${OPENCLAW_DIR}/.openclaw/openclaw.json`,
       renderOpenclawConfig({
         gatewayToken: generateGatewayToken(),
         openRouterApiKey: OPENROUTER_API_KEY(),
@@ -813,12 +1088,14 @@ export async function reprovisionBotEnv(instance: Instance): Promise<void> {
         soulMd: instance.soulMd,
       }),
     )
+    await sshRun(target, `chown -R openclaw:openclaw '${OPENCLAW_DIR}/.openclaw'`)
     await sshWriteFile(
       target,
       `${OPENCLAW_DIR}/.env`,
       renderEnvFile(env),
       { mode: "600" },
     )
+    await sshRun(target, `chown openclaw:openclaw '${OPENCLAW_DIR}/.env'`)
     await sshSystemctlRestart(target, OPENCLAW_SERVICE_NAME)
 
     await db.insert(instanceLogs).values({

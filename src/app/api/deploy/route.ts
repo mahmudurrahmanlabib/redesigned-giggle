@@ -225,7 +225,7 @@ export async function POST(req: NextRequest) {
 
   if (isStripeConfigured()) {
     const plan = await db.query.plans.findFirst({
-      where: and(eq(plans.tier, "starter"), eq(plans.isActive, true)),
+      where: and(eq(plans.tier, "builder"), eq(plans.isActive, true)),
     })
 
     const userRow = await db.query.users.findFirst({
@@ -276,7 +276,7 @@ export async function POST(req: NextRequest) {
       metadata: {
         instanceId: instance.id,
         userId: session.user.id,
-        planSlug: plan?.slug ?? "starter",
+        planSlug: plan?.slug ?? "builder",
         interval: billingInterval,
       },
       success_url: `${BRANDING.appUrl}/dashboard/instances/${instance.id}`,
@@ -314,7 +314,7 @@ export async function POST(req: NextRequest) {
   })()
 
   const plan = await db.query.plans.findFirst({
-    where: and(eq(plans.tier, "starter"), eq(plans.isActive, true)),
+    where: and(eq(plans.tier, "builder"), eq(plans.isActive, true)),
   })
   if (plan) {
     await db.insert(subscriptions).values({

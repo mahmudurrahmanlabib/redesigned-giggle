@@ -14,6 +14,8 @@ export const INSTANCE_STATES = [
   "running",
   "stopped",
   "failed_provisioning",
+  /** Legacy / external rows — same semantics as failed deploy; only legal exit is delete */
+  "failed",
   "deleting",
   "deleted",
 ] as const
@@ -26,6 +28,7 @@ const TRANSITIONS: Record<InstanceState, InstanceState[]> = {
   running: ["stopped", "deleting"],
   stopped: ["running", "deleting"],
   failed_provisioning: ["deleting", "provisioning"],
+  failed: ["deleting"],
   deleting: ["deleted", "failed_provisioning"],
   deleted: [],
 }
@@ -75,17 +78,23 @@ export async function transitionInstance(
   opts: TransitionOpts = {},
 ) {
   const fromStates = Array.isArray(from) ? from : [from]
-  for (const f of fromStates) {
-    if (!canTransition(f, to)) {
-      // Fail fast at dev-time. Catches typos before hitting the DB.
-      throw new IllegalTransitionError(instanceId, to, fromStates)
-    }
+  // OR semantics: callers pass multiple possible *current* statuses (e.g. delete from
+  // running OR stopped). Only states with a legal edge to `to` participate in the UPDATE.
+  // Do NOT require every listed state to reach `to` — e.g. provisioning cannot → deleting,
+  // but running can; including both in `from` must not throw before the UPDATE.
+  const legalSources = fromStates.filter((f) => canTransition(f, to))
+  if (legalSources.length === 0) {
+    throw new IllegalTransitionError(instanceId, to, fromStates)
   }
 
   const set: Record<string, unknown> = {
     ...opts.set,
     status: to,
     lastTransitionAt: new Date(),
+  }
+
+  if (to === "deleted") {
+    set.deletedAt = new Date()
   }
 
   if (opts.error !== undefined) {
@@ -104,7 +113,7 @@ export async function transitionInstance(
   const updated = await db
     .update(instances)
     .set(set)
-    .where(and(eq(instances.id, instanceId), inArray(instances.status, fromStates)))
+    .where(and(eq(instances.id, instanceId), inArray(instances.status, legalSources)))
     .returning()
 
   if (updated.length === 0) {
@@ -115,7 +124,7 @@ export async function transitionInstance(
     console.warn(
       `[instance-state] transition rejected for ${instanceId}: current=${current?.status ?? "missing"} → ${to}`,
     )
-    throw new IllegalTransitionError(instanceId, to, fromStates)
+    throw new IllegalTransitionError(instanceId, to, legalSources)
   }
 
   return updated[0]

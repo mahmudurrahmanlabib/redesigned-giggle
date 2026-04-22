@@ -45,7 +45,10 @@ export default async function AdminInstancesPage({
       : await db.query.instances.findMany({
           where: whereByTab,
           with: { user: true, region: true, serverConfig: true },
-          orderBy: desc(instances.createdAt),
+          orderBy:
+            active === "deleted"
+              ? [desc(instances.lastTransitionAt), desc(instances.createdAt)]
+              : desc(instances.createdAt),
         })
 
   const orphans =
@@ -120,6 +123,18 @@ export default async function AdminInstancesPage({
                     {instance.slug} · {instance.ipAddress || "no IP"}
                     {instance.domain && ` · ${instance.domain}`}
                   </p>
+                  {active === "deleted" && (
+                    <p className="text-xs text-zinc-500 mt-2 font-mono">
+                      Deleted:{" "}
+                      {(instance.deletedAt ?? instance.lastTransitionAt)?.toISOString().slice(0, 19) ?? "—"} UTC
+                      {instance.lastActiveAt && (
+                        <>
+                          {" "}
+                          · Last active: {instance.lastActiveAt.toISOString().slice(0, 19)} UTC
+                        </>
+                      )}
+                    </p>
+                  )}
                   {instance.lastError && (
                     <p className="text-xs text-red-400 mt-1 font-mono">
                       lastError: {instance.lastError}

@@ -54,8 +54,10 @@ export function buildOpenclawEnv(args: {
 }
 
 /**
- * Generate OpenClaw Gateway config.json5.
- * The gateway binds to loopback only; Caddy handles public TLS termination.
+ * Generate OpenClaw Gateway openclaw.json config.
+ * Uses the current schema: bind modes (not IPs), agents.defaults.model
+ * with primary/fallbacks, and agent list entries with `id`.
+ * OpenRouter API key is passed via env var (in .env), not in config.
  */
 export function renderOpenclawConfig(args: {
   gatewayToken: string
@@ -64,28 +66,23 @@ export function renderOpenclawConfig(args: {
   fallbackModel: string
   soulMd?: string | null
 }): string {
-  const soul = args.soulMd ?? "You are a helpful assistant."
   return `{
   gateway: {
     port: ${OPENCLAW_GATEWAY_PORT},
-    bind: "loopback",
+    bind: "lan",
     auth: {
       token: ${JSON.stringify(args.gatewayToken)},
     },
   },
-  providers: {
-    openrouter: {
-      apiKey: ${JSON.stringify(args.openRouterApiKey)},
-    },
-  },
   agents: {
-    list: [
-      {
-        name: "default",
-        model: ${JSON.stringify(args.model)},
-        fallbackModel: ${JSON.stringify(args.fallbackModel)},
-        systemPrompt: ${JSON.stringify(soul)},
+    defaults: {
+      model: {
+        primary: ${JSON.stringify(args.model)},
+        fallbacks: [${JSON.stringify(args.fallbackModel)}],
       },
+    },
+    list: [
+      { id: "main" },
     ],
   },
 }
@@ -129,7 +126,7 @@ EnvironmentFile=/opt/openclaw/.env
 Environment=NODE_COMPILE_CACHE=/var/tmp/openclaw-compile-cache
 Environment=OPENCLAW_NO_RESPAWN=1
 Environment=HOME=/opt/openclaw
-ExecStart=/usr/bin/openclaw gateway --config /opt/openclaw/config.json5
+ExecStart=/usr/bin/openclaw gateway --allow-unconfigured
 Restart=always
 RestartSec=2
 TimeoutStartSec=90

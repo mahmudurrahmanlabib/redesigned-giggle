@@ -1,4 +1,4 @@
-import { db, botHosts, instances, eq, and, isNotNull, sql } from "@/db"
+import { db, botHosts, instances, eq, and, ne, isNotNull, sql } from "@/db"
 
 export class FleetFullError extends Error {
   constructor() {
@@ -39,7 +39,7 @@ export async function pickHost(): Promise<PickedHost> {
       const rows = await db
         .select({ count: sql<number>`count(*)::int` })
         .from(instances)
-        .where(eq(instances.botHostId, h.id))
+        .where(and(eq(instances.botHostId, h.id), ne(instances.status, "deleted")))
       return { id: h.id, count: rows[0]?.count ?? 0 }
     }),
   )
@@ -68,7 +68,11 @@ export async function pickHost(): Promise<PickedHost> {
  */
 export async function allocatePort(botHostId: string): Promise<number> {
   const used = await db.query.instances.findMany({
-    where: and(eq(instances.botHostId, botHostId), isNotNull(instances.containerPort)),
+    where: and(
+      eq(instances.botHostId, botHostId),
+      isNotNull(instances.containerPort),
+      ne(instances.status, "deleted"),
+    ),
     columns: { containerPort: true },
   })
   const taken = new Set(used.map((r) => r.containerPort).filter((p): p is number => typeof p === "number"))

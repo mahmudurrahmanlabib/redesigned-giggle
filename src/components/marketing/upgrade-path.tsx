@@ -4,28 +4,34 @@ import { ArrowRight } from "lucide-react"
 
 const STEPS = [
   {
-    label: "Start",
-    tier: "Starter",
-    price: "$5/mo",
-    benefit: "Launch your first AI agent",
+    label: "Try",
+    tier: "Free",
+    price: "$0",
+    benefit: "100 credits, core workflows, no always-on agents",
   },
   {
-    label: "Grow",
-    tier: "Pro",
-    price: "$29/mo",
-    benefit: "Scale to 10 agents across all types",
+    label: "Build",
+    tier: "Builder",
+    price: "$79/mo",
+    benefit: "Deploy agents, automation, 1 live agent",
+  },
+  {
+    label: "Operate",
+    tier: "Operator",
+    price: "$199/mo",
+    benefit: "Multi-agent workflows, priority processing",
   },
   {
     label: "Scale",
     tier: "Enterprise",
-    price: "$199/mo",
-    benefit: "Unlimited agents, custom builds, dedicated support",
+    price: "From $1,000/mo",
+    benefit: "Dedicated infrastructure, SLA, custom credits",
   },
 ]
 
 export function UpgradePath() {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-0 relative">
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-0 relative">
       {STEPS.map((step, i) => (
         <div
           key={step.label}
@@ -52,7 +58,7 @@ export function UpgradePath() {
           </p>
 
           {i < STEPS.length - 1 && (
-            <ArrowRight className="hidden md:block absolute -right-3 top-1/2 -translate-y-1/2 z-10 w-6 h-6 text-[var(--accent-color)]" />
+            <ArrowRight className="hidden xl:block absolute -right-3 top-1/2 -translate-y-1/2 z-10 w-6 h-6 text-[var(--accent-color)]" />
           )}
         </div>
       ))}

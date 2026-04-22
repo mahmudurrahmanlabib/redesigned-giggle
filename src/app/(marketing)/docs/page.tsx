@@ -33,12 +33,12 @@ const faqItems = [
   {
     question: "How does billing work?",
     answer:
-      "Billing is monthly or yearly via Stripe. Starter is $5/mo (1 agent), Pro is $29/mo (up to 10 agents), and Enterprise is $199/mo (unlimited agents + dedicated support). Yearly plans save ~17%. You can manage subscriptions from your dashboard.",
+      "Billing is monthly or yearly via Stripe. Plans include Free (100 credits), Builder ($79/mo), Operator ($199/mo), Scale ($399/mo), and Enterprise (from $1,000+/mo). Credits cover AI usage, workflows, automations, and vector search; you can buy overage packs. Annual billing includes about two months free vs. monthly. Manage subscriptions from your dashboard.",
   },
   {
     question: "Can I deploy multiple agents?",
     answer:
-      "Yes. Pro plans support up to 10 simultaneous agents across all agent types. Enterprise plans support unlimited agents. Each agent gets its own configuration, region, compute tier, and monitoring dashboard.",
+      "Yes. How many agents you can run at once depends on your plan (live agent limits and credits). Higher tiers add more live agents, credits, and throughput. Each agent gets its own configuration, region, compute tier, and monitoring dashboard.",
   },
   {
     question: "What regions are available for deployment?",
@@ -120,13 +120,13 @@ const sections = [
         <p>SovereignML supports 8 agent categories, each purpose-built for a specific business function:</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {[
-            { name: "Automation Agent", desc: "Automate workflows, data entry, scheduled reports, and business ops.", plan: "Starter" },
-            { name: "DevOps Agent", desc: "Monitor infrastructure, manage CI/CD pipelines, and auto-resolve incidents.", plan: "Pro" },
-            { name: "Support Agent", desc: "Handle customer tickets, FAQ auto-responses, and live chat 24/7.", plan: "Starter" },
-            { name: "Research Agent", desc: "Scrape the web, analyze data, and generate actionable summaries.", plan: "Pro" },
-            { name: "Content Agent", desc: "Create blog posts, newsletters, and SEO-optimized copy.", plan: "Pro" },
-            { name: "Sales Agent", desc: "Generate leads, run outreach sequences, and enrich your CRM.", plan: "Pro" },
-            { name: "Social Media Manager", desc: "Schedule posts, optimize engagement, and execute growth strategies.", plan: "Pro" },
+            { name: "Automation Agent", desc: "Automate workflows, data entry, scheduled reports, and business ops.", plan: "Builder+" },
+            { name: "DevOps Agent", desc: "Monitor infrastructure, manage CI/CD pipelines, and auto-resolve incidents.", plan: "Operator+" },
+            { name: "Support Agent", desc: "Handle customer tickets, FAQ auto-responses, and live chat 24/7.", plan: "Builder+" },
+            { name: "Research Agent", desc: "Scrape the web, analyze data, and generate actionable summaries.", plan: "Operator+" },
+            { name: "Content Agent", desc: "Create blog posts, newsletters, and SEO-optimized copy.", plan: "Operator+" },
+            { name: "Sales Agent", desc: "Generate leads, run outreach sequences, and enrich your CRM.", plan: "Operator+" },
+            { name: "Social Media Manager", desc: "Schedule posts, optimize engagement, and execute growth strategies.", plan: "Operator+" },
             { name: "Custom Agent", desc: "Bespoke multi-agent systems built to your exact requirements.", plan: "Enterprise" },
           ].map((agent) => (
             <div key={agent.name} className="border border-[var(--border-color)] p-4">
@@ -215,11 +215,11 @@ const sections = [
         <div className="space-y-3">
           <div>
             <p className="font-bold text-[var(--text-primary)] mb-1">Plans</p>
-            <p>Starter ($5/mo) supports 1 agent. Pro ($29/mo) supports up to 10 agents across all types. Enterprise ($199/mo) offers unlimited agents, custom builds, and dedicated support.</p>
+            <p>Plans are credit-based with included monthly credits and live agent limits per tier (see sovereignml.com/pricing). Enterprise adds custom credit allocation, infrastructure, and SLAs.</p>
           </div>
           <div>
             <p className="font-bold text-[var(--text-primary)] mb-1">Yearly Billing</p>
-            <p>Choosing yearly billing at deploy time saves approximately 17% — equivalent to 2 months free. The billing interval cannot be changed after deployment.</p>
+            <p>Choosing yearly billing at deploy time saves about two months vs. paying monthly on Builder, Operator, and Scale. The billing interval cannot be changed after deployment.</p>
           </div>
           <div>
             <p className="font-bold text-[var(--text-primary)] mb-1">Billing Dashboard</p>

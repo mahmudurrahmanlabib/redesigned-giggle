@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { auth } from "@/auth"
-import { db, eq, and, gte, sql, instances, subscriptions, users, usageEvents, instanceLogs } from "@/db"
+import { db, eq, and, gte, sql, ne, instances, subscriptions, users, usageEvents, instanceLogs } from "@/db"
+import { whereUserInstancesVisible } from "@/lib/instance-queries"
 
 export async function GET() {
   const session = await auth()
@@ -20,7 +21,7 @@ export async function GET() {
     incident24Rows,
   ] = await Promise.all([
     db.query.instances.findMany({
-      where: eq(instances.userId, userId),
+      where: whereUserInstancesVisible(userId),
       columns: { id: true, status: true },
     }),
     db
@@ -42,18 +43,18 @@ export async function GET() {
       .where(
         and(
           eq(instances.userId, userId),
+          ne(instances.status, "deleted"),
           eq(instanceLogs.level, "error"),
           gte(instanceLogs.createdAt, since24)
         )
       ),
   ])
 
-  const nonDeleted = userInstances.filter((i) => i.status !== "deleted")
   const activeInstances = userInstances.filter((i) => i.status === "running").length
 
   return NextResponse.json({
     activeInstances,
-    totalInstances: nonDeleted.length,
+    totalInstances: userInstances.length,
     activeSubscriptions: Number(activeSubRows[0]?.count ?? 0),
     credits: user?.credits ?? 0,
     usage30dTotal: Number(usage30Rows[0]?.total ?? 0),

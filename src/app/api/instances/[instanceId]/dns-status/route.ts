@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import dns from "node:dns"
 import { auth } from "@/auth"
 import { db, instances, eq } from "@/db"
+import { whereUserInstanceVisible } from "@/lib/instance-queries"
 
 type DnsStatus = "pending" | "propagating" | "ready" | "error"
 type TlsStatus = "pending" | "issued" | "failed"
@@ -16,15 +17,18 @@ export async function GET(
   }
 
   const { instanceId } = await params
+  const isAdmin = (session.user as { role?: string }).role === "admin"
   const instance = await db.query.instances.findFirst({
-    where: eq(instances.id, instanceId),
+    where: isAdmin ? eq(instances.id, instanceId) : whereUserInstanceVisible(session.user.id, instanceId),
   })
   if (!instance) {
     return NextResponse.json({ error: "Instance not found" }, { status: 404 })
   }
-  const isAdmin = (session.user as { role?: string }).role === "admin"
   if (!isAdmin && instance.userId !== session.user.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  }
+  if (instance.status === "deleted") {
+    return NextResponse.json({ error: "Instance not found" }, { status: 404 })
   }
 
   // No domain configured = no DNS/TLS state. Do NOT synthesize "ready"/"issued"

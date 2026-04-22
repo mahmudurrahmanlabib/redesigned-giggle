@@ -1,7 +1,8 @@
 import { auth } from "@/auth"
-import { db, eq, not, instances } from "@/db"
+import { db, instances } from "@/db"
 import { redirect } from "next/navigation"
 import Link from "next/link"
+import { whereUserInstancesVisible } from "@/lib/instance-queries"
 
 const STATUS_STYLES: Record<string, string> = {
   running: "text-[var(--accent-color)]",
@@ -15,12 +16,10 @@ export default async function MonitoringPage() {
   const session = await auth()
   if (!session?.user?.id) redirect("/login")
 
-  const rows = await db.query.instances.findMany({
-    where: eq(instances.userId, session.user.id),
+  const visibleInstances = await db.query.instances.findMany({
+    where: whereUserInstancesVisible(session.user.id),
     orderBy: (t, { desc }) => desc(t.createdAt),
   })
-
-  const visibleInstances = rows.filter((i) => i.status !== "deleted")
 
   return (
     <div className="space-y-8 max-w-6xl">

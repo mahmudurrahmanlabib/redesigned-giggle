@@ -25,7 +25,7 @@ export default async function BillingPage() {
   })
 
   const totalMonthly = rows
-    .filter((s) => s.status === "active" && s.instance)
+    .filter((s) => s.status === "active" && s.instance && s.instance.status !== "deleted")
     .reduce((sum, s) => {
       if (!s.instance) return sum
       return sum + (s.interval === "year"
@@ -87,7 +87,10 @@ export default async function BillingPage() {
                         {sub.status}
                       </Badge>
                     </div>
-                    {sub.instance && (
+                    {sub.instance && sub.instance.status === "deleted" && (
+                      <p className="text-sm text-[var(--text-secondary)] mt-1">Agent removed (deleted)</p>
+                    )}
+                    {sub.instance && sub.instance.status !== "deleted" && (
                       <p className="text-sm text-[var(--text-secondary)] mt-1">
                         {sub.instance.name} &middot; {sub.instance.region.name} &middot; {sub.instance.serverConfig.label}
                       </p>

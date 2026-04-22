@@ -105,13 +105,8 @@ async function main() {
     .where(notInArray(serverConfigs.slug, serverSlugs))
 
   // 4. Subscription plans
-  const CREDITS_PER_PERIOD: Record<string, number> = {
-    starter: 1_000,
-    pro: 20_000,
-    enterprise: 100_000,
-  }
   for (const plan of PLANS) {
-    const credits = CREDITS_PER_PERIOD[plan.tier] ?? 0
+    const credits = plan.creditsPerPeriod
     await db
       .insert(plans)
       .values({

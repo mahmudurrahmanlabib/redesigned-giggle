@@ -36,8 +36,44 @@ const FILTERS = [
 ] as const
 type Filter = (typeof FILTERS)[number]
 
+function mapRowsToItems(
+  rows: Array<{
+    id: string
+    name: string
+    slug: string
+    status: string
+    ipAddress: string | null
+    region: { flag: string; name: string }
+    serverConfig: { label: string; vcpu: number; ramGb: number }
+    logs?: Array<{ id: string; level: string; message: string; createdAt: string | Date }>
+  }>,
+): Item[] {
+  return rows
+    .filter((row) => row.status !== "deleted")
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      slug: row.slug,
+      status: row.status,
+      ipAddress: row.ipAddress,
+      regionLabel: `${row.region.flag} ${row.region.name}`,
+      serverLabel: row.serverConfig.label,
+      vcpu: row.serverConfig.vcpu,
+      ramGb: row.serverConfig.ramGb,
+      recentLogs: (row.logs ?? []).slice(0, 3).map((l) => ({
+        id: l.id,
+        level: l.level,
+        message: l.message,
+        createdAt:
+          typeof l.createdAt === "string"
+            ? l.createdAt
+            : new Date(l.createdAt).toISOString(),
+      })),
+    }))
+}
+
 export function InstancesFilter({ items: initialItems }: { items: Item[] }) {
-  const [items, setItems] = useState(initialItems)
+  const [items, setItems] = useState(() => initialItems.filter((i) => i.status !== "deleted"))
   const [q, setQ] = useState("")
   const [status, setStatus] = useState<Filter>("all")
 
@@ -46,7 +82,10 @@ export function InstancesFilter({ items: initialItems }: { items: Item[] }) {
   )
 
   useEffect(() => {
-    if (!hasProvisioning) return
+    setItems(initialItems.filter((i) => i.status !== "deleted"))
+  }, [initialItems])
+
+  useEffect(() => {
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
 
@@ -54,27 +93,27 @@ export function InstancesFilter({ items: initialItems }: { items: Item[] }) {
       try {
         const r = await fetch("/api/instances", { cache: "no-store" })
         if (!r.ok || cancelled) return
-        const rows = await r.json()
-        setItems((prev) =>
-          prev.map((item) => {
-            const updated = rows.find((r: { id: string }) => r.id === item.id)
-            if (!updated) return item
-            return {
-              ...item,
-              status: updated.status,
-              ipAddress: updated.ipAddress,
-            }
-          })
-        )
+        const rows = (await r.json()) as Array<{
+          id: string
+          name: string
+          slug: string
+          status: string
+          ipAddress: string | null
+          region: { flag: string; name: string }
+          serverConfig: { label: string; vcpu: number; ramGb: number }
+          logs?: Array<{ id: string; level: string; message: string; createdAt: string | Date }>
+        }>
+        setItems(mapRowsToItems(rows))
       } catch {
         /* retry next interval */
       }
       if (!cancelled) {
-        timer = setTimeout(poll, 5_000)
+        const interval = hasProvisioning ? 4_000 : 12_000
+        timer = setTimeout(poll, interval)
       }
     }
 
-    timer = setTimeout(poll, 3_000)
+    void poll()
     return () => {
       cancelled = true
       if (timer) clearTimeout(timer)

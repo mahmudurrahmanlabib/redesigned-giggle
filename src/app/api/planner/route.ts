@@ -24,11 +24,11 @@ export async function POST(request: Request) {
       )
     }
 
-    let suggestedPlan: "starter" | "pro" | "enterprise" = "starter"
+    let suggestedPlan: "free" | "builder" | "operator" | "scale" | "enterprise" = "builder"
     if (useCase === "custom") {
       suggestedPlan = "enterprise"
     } else if (PRO_AGENTS.has(useCase)) {
-      suggestedPlan = "pro"
+      suggestedPlan = "operator"
     }
 
     return NextResponse.json({

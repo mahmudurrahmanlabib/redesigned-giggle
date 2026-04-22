@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { auth } from "@/auth"
-import { db, instances, eq, desc } from "@/db"
+import { db, desc, instances } from "@/db"
+import { whereUserInstancesVisible } from "@/lib/instance-queries"
 
 export async function GET() {
   const session = await auth()
@@ -8,10 +9,8 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const isAdmin = (session.user as { role?: string }).role === "admin"
-
   const rows = await db.query.instances.findMany({
-    where: isAdmin ? undefined : eq(instances.userId, session.user.id),
+    where: whereUserInstancesVisible(session.user.id),
     with: {
       region: true,
       serverConfig: true,

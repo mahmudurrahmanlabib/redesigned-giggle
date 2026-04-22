@@ -1,88 +1,176 @@
-// Subscription tier metadata. Drives the landing page pricing grid + seed.
-// Stripe price IDs are filled in by the user when they wire real Stripe keys.
+// Subscription tier metadata. Drives pricing UI, landing sections, and DB seed.
+// Stripe price IDs are set via env when wiring Stripe checkout.
 
-export type PlanTier = "starter" | "pro" | "enterprise"
+export type PlanTier = "free" | "builder" | "operator" | "scale" | "enterprise"
+
+export type PlanCTA = "start-free" | "get-started" | "contact-sales"
 
 export type PlanConfig = {
   slug: string
   tier: PlanTier
   name: string
+  /** Subtitle under tier name */
   description: string
   features: string[]
-  // Stripe price IDs (set in env when wiring Stripe). Left empty for dev.
+  /** Shown for Free tier (e.g. no always-on agents) */
+  restrictions?: readonly string[]
   stripePriceIdMonthly: string
   stripePriceIdYearly: string
   isActive: boolean
   sortOrder: number
-  // Display-only "starting at" price for the landing page grid.
-  // The real charge is per-instance (server type + storage).
+  /** Credits granted each billing period (seed + product logic) */
+  creditsPerPeriod: number
+  /** Monthly list price (0 for Free) */
   displayPriceMonthly: number
+  /** Annual list price (0 for Free; Enterprise may omit use of this) */
+  displayPriceYearly: number
   highlight?: boolean
+  cta: PlanCTA
+  /** Enterprise custom price line */
+  enterprisePriceLabel?: string
 }
 
 export const PLANS: readonly PlanConfig[] = [
   {
-    slug: "starter",
-    tier: "starter",
-    name: "Starter",
-    description: "For solo developers launching their first AI agent.",
+    slug: "free",
+    tier: "free",
+    name: "Free",
+    description: "Try and build",
     features: [
-      "1 active AI agent",
-      "Standard compute",
+      "100 credits included",
+      "Limited workflows",
+      "Basic agent deployment",
       "Community support",
-      "Basic monitoring",
-      "Daily health checks",
     ],
-    stripePriceIdMonthly: process.env.STRIPE_PRICE_STARTER_MONTHLY ?? "",
-    stripePriceIdYearly: process.env.STRIPE_PRICE_STARTER_YEARLY ?? "",
+    restrictions: ["No always-on agents"],
+    stripePriceIdMonthly: process.env.STRIPE_PRICE_FREE_MONTHLY ?? "",
+    stripePriceIdYearly: process.env.STRIPE_PRICE_FREE_YEARLY ?? "",
     isActive: true,
-    sortOrder: 10,
-    displayPriceMonthly: 5,
+    sortOrder: 0,
+    creditsPerPeriod: 100,
+    displayPriceMonthly: 0,
+    displayPriceYearly: 0,
+    cta: "start-free",
   },
   {
-    slug: "pro",
-    tier: "pro",
-    name: "Pro",
-    description: "For teams running production AI agents at scale.",
+    slug: "builder",
+    tier: "builder",
+    name: "Builder",
+    description: "For solo builders",
     features: [
-      "Up to 10 AI agents",
-      "All agent types",
-      "Priority email support",
-      "Advanced monitoring & alerts",
-      "Hourly health checks",
-      "Custom configurations",
-      "Managed optimization",
+      "3,000 credits included",
+      "Deploy AI agents",
+      "Workflow automation",
+      "Basic integrations",
+      "Email support",
+      "1 live agent included",
     ],
-    stripePriceIdMonthly: process.env.STRIPE_PRICE_PRO_MONTHLY ?? "",
-    stripePriceIdYearly: process.env.STRIPE_PRICE_PRO_YEARLY ?? "",
+    stripePriceIdMonthly: process.env.STRIPE_PRICE_BUILDER_MONTHLY ?? "",
+    stripePriceIdYearly: process.env.STRIPE_PRICE_BUILDER_YEARLY ?? "",
+    isActive: true,
+    sortOrder: 10,
+    creditsPerPeriod: 3_000,
+    displayPriceMonthly: 79,
+    displayPriceYearly: 790,
+    cta: "get-started",
+  },
+  {
+    slug: "operator",
+    tier: "operator",
+    name: "Operator",
+    description: "For growing operations",
+    features: [
+      "12,000 credits included",
+      "Multi-agent workflows",
+      "Advanced integrations",
+      "Priority processing",
+      "Standard support",
+      "3 live agents included",
+    ],
+    stripePriceIdMonthly: process.env.STRIPE_PRICE_OPERATOR_MONTHLY ?? "",
+    stripePriceIdYearly: process.env.STRIPE_PRICE_OPERATOR_YEARLY ?? "",
     isActive: true,
     sortOrder: 20,
-    displayPriceMonthly: 29,
+    creditsPerPeriod: 12_000,
+    displayPriceMonthly: 199,
+    displayPriceYearly: 1_990,
     highlight: true,
+    cta: "get-started",
+  },
+  {
+    slug: "scale",
+    tier: "scale",
+    name: "Scale",
+    description: "For agencies and teams",
+    features: [
+      "35,000 credits included",
+      "High-throughput workflows",
+      "Team collaboration",
+      "Advanced monitoring",
+      "Priority support",
+      "10 live agents included",
+    ],
+    stripePriceIdMonthly: process.env.STRIPE_PRICE_SCALE_MONTHLY ?? "",
+    stripePriceIdYearly: process.env.STRIPE_PRICE_SCALE_YEARLY ?? "",
+    isActive: true,
+    sortOrder: 30,
+    creditsPerPeriod: 35_000,
+    displayPriceMonthly: 399,
+    displayPriceYearly: 3_990,
+    cta: "get-started",
   },
   {
     slug: "enterprise",
     tier: "enterprise",
     name: "Enterprise",
-    description: "For organizations running mission-critical AI operations.",
+    description: "For high-scale organizations",
     features: [
-      "Unlimited AI agents",
-      "Custom agent builds",
-      "Dedicated success engineer",
-      "24/7 phone + Slack support",
-      "Custom SLAs",
-      "Real-time agent health monitoring",
-      "Bring-your-own infrastructure",
-      "SOC2 + audit logs",
+      "Custom credit allocation",
+      "Dedicated infrastructure",
+      "SLA guarantees",
+      "Custom integrations",
+      "Dedicated support",
+      "Scalable agent deployments",
     ],
     stripePriceIdMonthly: process.env.STRIPE_PRICE_ENTERPRISE_MONTHLY ?? "",
     stripePriceIdYearly: process.env.STRIPE_PRICE_ENTERPRISE_YEARLY ?? "",
     isActive: true,
-    sortOrder: 30,
-    displayPriceMonthly: 199,
+    sortOrder: 40,
+    creditsPerPeriod: 0,
+    displayPriceMonthly: 0,
+    displayPriceYearly: 0,
+    enterprisePriceLabel: "Starting at $1,000+/month",
+    cta: "contact-sales",
   },
 ] as const
 
+export const PRICING_POSITIONING = {
+  headline: "AI Workforce Infrastructure",
+  subheadline:
+    "Build, deploy, and scale autonomous AI operations — without managing complexity.",
+} as const
+
+export const OVERAGE_PACKS = [
+  { credits: 2_000, priceUsd: 25 },
+  { credits: 10_000, priceUsd: 99 },
+  { credits: 25_000, priceUsd: 199 },
+] as const
+
+export const ADD_ONS = [
+  { name: "Extra live agent", price: "$29/mo" },
+  { name: "Premium integrations", price: "$49/mo" },
+  { name: "Priority support", price: "$99/mo" },
+  { name: "White-label", price: "$199/mo" },
+  { name: "Custom workflow builds", price: "Starting at $500" },
+] as const
+
+export const CREDIT_TOOLTIP =
+  "Credits are consumed based on AI usage and workflows."
+
 export function findPlanBySlug(slug: string): PlanConfig | undefined {
   return PLANS.find((p) => p.slug === slug)
+}
+
+export function formatUsd(amount: number): string {
+  return `$${amount.toLocaleString("en-US")}`
 }

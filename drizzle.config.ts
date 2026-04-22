@@ -12,5 +12,6 @@ export default defineConfig({
   dialect: "postgresql",
   dbCredentials: { url: process.env.DATABASE_URL },
   verbose: true,
-  strict: true,
+  // false = apply schema without a TTY prompt (CI, scripts). Review diffs before push in prod.
+  strict: false,
 })

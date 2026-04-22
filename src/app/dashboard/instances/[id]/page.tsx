@@ -1,6 +1,7 @@
 import { auth } from "@/auth"
-import { db, eq, and, instances } from "@/db"
+import { db } from "@/db"
 import { notFound, redirect } from "next/navigation"
+import { whereUserInstanceVisible } from "@/lib/instance-queries"
 import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
 import { InstanceTabs } from "./instance-tabs"
@@ -48,7 +49,7 @@ export default async function InstanceDetailPage({
   const { tab } = await searchParams
 
   const instance = await db.query.instances.findFirst({
-    where: and(eq(instances.id, id), eq(instances.userId, session.user.id)),
+    where: whereUserInstanceVisible(session.user.id, id),
     with: {
       region: true,
       serverConfig: true,
@@ -148,6 +149,9 @@ export default async function InstanceDetailPage({
           tlsStatus: instance.tlsStatus,
           openclawAdminEmail: instance.openclawAdminEmail,
           hasOpenclawPassword: Boolean(instance.openclawAdminPasswordEnc),
+          hasRootPassword: Boolean(instance.rootPasswordEnc),
+          hasGatewayToken: Boolean(instance.gatewayTokenEnc),
+          deploymentTarget: instance.deploymentTarget,
         }}
         logs={instance.logs.map((l) => ({
           id: l.id,

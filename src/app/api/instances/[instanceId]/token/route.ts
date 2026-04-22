@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import crypto from "node:crypto"
 import { auth } from "@/auth"
 import { db, instances, instanceLogs, eq } from "@/db"
+import { whereUserInstanceVisible } from "@/lib/instance-queries"
 import { reprovisionBotEnv } from "@/lib/provisioner"
 
 async function requireOwner(instanceId: string) {
@@ -11,13 +12,16 @@ async function requireOwner(instanceId: string) {
   }
   const isAdmin = (session.user as { role?: string }).role === "admin"
   const instance = await db.query.instances.findFirst({
-    where: eq(instances.id, instanceId),
+    where: isAdmin ? eq(instances.id, instanceId) : whereUserInstanceVisible(session.user.id, instanceId),
   })
   if (!instance) {
     return { error: NextResponse.json({ error: "Not found" }, { status: 404 }) }
   }
   if (!isAdmin && instance.userId !== session.user.id) {
     return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) }
+  }
+  if (instance.status === "deleted") {
+    return { error: NextResponse.json({ error: "Not found" }, { status: 404 }) }
   }
   return { instance }
 }

@@ -56,6 +56,9 @@ async function handle(req: NextRequest, params: { id8: string; path: string[] })
     return NextResponse.json({ error: "ambiguous id8 — use a longer prefix" }, { status: 409 })
   }
   const inst = candidates[0]
+  if (inst.status === "deleted") {
+    return NextResponse.json({ error: "not found" }, { status: 404 })
+  }
   if (inst.status !== "running") {
     return NextResponse.json({ error: `bot is ${inst.status}` }, { status: 503 })
   }

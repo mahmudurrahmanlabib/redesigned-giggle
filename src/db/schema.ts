@@ -267,6 +267,8 @@ export const instances = pgTable(
     modelTier: text(),
     botToken: text(),
     lastActiveAt: timestamp({ mode: "date", withTimezone: false }),
+    /** Set when status becomes `deleted` — used for admin audit / sorting */
+    deletedAt: timestamp({ mode: "date", withTimezone: false }),
     deploymentTarget: text(),
     interfaceKind: text(),
     telegramBotTokenEnc: text(),
@@ -283,6 +285,10 @@ export const instances = pgTable(
     tlsStatus: text(),
     openclawAdminEmail: text(),
     openclawAdminPasswordEnc: text(),
+    gatewayTokenEnc: text(),
+
+    provisionStage: text(),
+    failedStage: text(),
 
     createdAt: now(),
     updatedAt: timestamp({ mode: "date", withTimezone: false })

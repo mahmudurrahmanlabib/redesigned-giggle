@@ -1,19 +1,16 @@
 import { auth } from "@/auth"
-import { db, eq, and, desc, instances, sql } from "@/db"
+import { db, desc, instances } from "@/db"
 import { redirect } from "next/navigation"
 import Link from "next/link"
+import { whereUserInstancesVisible } from "@/lib/instance-queries"
 import { InstancesFilter } from "./instances-filter"
 
 export default async function InstancesPage() {
   const session = await auth()
   if (!session?.user?.id) redirect("/login")
 
-  // Hide deleted rows from the user panel. They remain visible in admin.
   const rows = await db.query.instances.findMany({
-    where: and(
-      eq(instances.userId, session.user.id),
-      sql`${instances.status} != 'deleted'`,
-    ),
+    where: whereUserInstancesVisible(session.user.id),
     with: {
       region: true,
       serverConfig: true,
@@ -25,23 +22,25 @@ export default async function InstancesPage() {
     orderBy: desc(instances.createdAt),
   })
 
-  const items = rows.map((i) => ({
-    id: i.id,
-    name: i.name,
-    slug: i.slug,
-    status: i.status,
-    ipAddress: i.ipAddress,
-    regionLabel: `${i.region.flag} ${i.region.name}`,
-    serverLabel: i.serverConfig.label,
-    vcpu: i.serverConfig.vcpu,
-    ramGb: i.serverConfig.ramGb,
-    recentLogs: i.logs.map((l) => ({
-      id: l.id,
-      level: l.level,
-      message: l.message,
-      createdAt: l.createdAt.toISOString(),
-    })),
-  }))
+  const items = rows
+    .filter((i) => i.status !== "deleted")
+    .map((i) => ({
+      id: i.id,
+      name: i.name,
+      slug: i.slug,
+      status: i.status,
+      ipAddress: i.ipAddress,
+      regionLabel: `${i.region.flag} ${i.region.name}`,
+      serverLabel: i.serverConfig.label,
+      vcpu: i.serverConfig.vcpu,
+      ramGb: i.serverConfig.ramGb,
+      recentLogs: i.logs.map((l) => ({
+        id: l.id,
+        level: l.level,
+        message: l.message,
+        createdAt: l.createdAt.toISOString(),
+      })),
+    }))
 
   return (
     <div className="space-y-6 max-w-5xl">

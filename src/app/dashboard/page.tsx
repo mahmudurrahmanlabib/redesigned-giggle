@@ -1,6 +1,7 @@
 import { auth } from "@/auth"
-import { db, eq, and, gte, sql, instances, subscriptions, users, usageEvents, instanceLogs } from "@/db"
+import { db, eq, and, gte, sql, ne, instances, subscriptions, users, usageEvents, instanceLogs } from "@/db"
 import { redirect } from "next/navigation"
+import { whereUserInstancesVisible } from "@/lib/instance-queries"
 import { Badge } from "@/components/ui/badge"
 import Link from "next/link"
 
@@ -21,7 +22,7 @@ export default async function DashboardPage() {
 
   const [allInstances, allSubscriptions, user, usage30Rows, incidents24Rows] = await Promise.all([
     db.query.instances.findMany({
-      where: eq(instances.userId, session.user.id),
+      where: whereUserInstancesVisible(session.user.id),
       with: { region: true, serverConfig: true },
       orderBy: (t, { desc }) => desc(t.createdAt),
     }),
@@ -44,6 +45,7 @@ export default async function DashboardPage() {
       .where(
         and(
           eq(instances.userId, session.user.id),
+          ne(instances.status, "deleted"),
           eq(instanceLogs.level, "error"),
           gte(instanceLogs.createdAt, since24)
         )

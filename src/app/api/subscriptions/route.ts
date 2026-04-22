@@ -20,7 +20,13 @@ export async function GET() {
       orderBy: desc(subscriptions.createdAt),
     })
 
-    return NextResponse.json(rows)
+    return NextResponse.json(
+      rows.map((row) => ({
+        ...row,
+        instance:
+          row.instance && row.instance.status === "deleted" ? null : row.instance,
+      })),
+    )
   } catch (error) {
     console.error("Failed to fetch subscriptions:", error)
     return NextResponse.json(

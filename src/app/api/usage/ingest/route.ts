@@ -47,6 +47,9 @@ export async function POST(req: NextRequest) {
   if (!instance) {
     return NextResponse.json({ error: "invalid bot token" }, { status: 401 })
   }
+  if (instance.status === "deleted") {
+    return NextResponse.json({ error: "invalid bot token" }, { status: 401 })
+  }
 
   let body: IngestBody
   try {

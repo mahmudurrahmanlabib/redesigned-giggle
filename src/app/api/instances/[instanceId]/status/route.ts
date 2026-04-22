@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/auth"
-import { db, instances, instanceLogs, eq, and, desc } from "@/db"
+import { db, instances, instanceLogs, eq, desc } from "@/db"
+import { whereUserInstanceVisible } from "@/lib/instance-queries"
 
 export async function GET(
   _req: NextRequest,
@@ -14,10 +15,7 @@ export async function GET(
   const { instanceId } = await params
 
   const instance = await db.query.instances.findFirst({
-    where: and(
-      eq(instances.id, instanceId),
-      eq(instances.userId, session.user.id)
-    ),
+    where: whereUserInstanceVisible(session.user.id, instanceId),
     columns: {
       id: true,
       status: true,

@@ -49,13 +49,16 @@ export default async function SubscriptionsPage() {
                       {sub.status}
                     </Badge>
                   </div>
-                  {sub.instance && (
+                  {sub.instance && sub.instance.status === "deleted" && (
+                    <p className="text-sm text-[var(--text-secondary)] mt-1">Agent removed (deleted)</p>
+                  )}
+                  {sub.instance && sub.instance.status !== "deleted" && (
                     <p className="text-sm text-[var(--text-secondary)] mt-1">
                       {sub.instance.name} &middot; {sub.instance.region.name} &middot; {sub.instance.serverConfig.label}
                     </p>
                   )}
                 </div>
-                {sub.instance && (
+                {sub.instance && sub.instance.status !== "deleted" && (
                   <div className="text-right">
                     <p className="text-[var(--text-primary)] font-semibold">
                       ${sub.interval === "year"

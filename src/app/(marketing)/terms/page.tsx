@@ -52,7 +52,7 @@ Features described in documentation or marketing materials may be subject to pla
     subsections: [
       {
         title: "Subscription Plans",
-        content: "SovereignML offers three subscription tiers: Starter ($5/mo, 1 agent), Pro ($29/mo, up to 10 agents), and Enterprise ($199/mo, unlimited agents). Plan features and agent type access vary by tier. Plan details are available at sovereignml.com/pricing.",
+        content: "SovereignML offers subscription tiers including Free, Builder, Operator, Scale, and Enterprise (custom pricing). Plans are credit-based for AI usage, workflows, automations, and related services. Features and limits vary by tier. Current plan details are available at sovereignml.com/pricing.",
       },
       {
         title: "Payment",
