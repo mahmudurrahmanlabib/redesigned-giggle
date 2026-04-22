@@ -58,20 +58,40 @@ export function buildOpenclawEnv(args: {
  * Uses the current schema: bind modes (not IPs), agents.defaults.model
  * with primary/fallbacks, and agent list entries with `id`.
  * OpenRouter API key is passed via env var (in .env), not in config.
+ *
+ * Gateway binds to localhost (Caddy on the same host proxies all external
+ * traffic). trustedProxies is 127.0.0.1 so OpenClaw honours headers from
+ * Caddy. Both auth.token and remote.token must match for token validation.
  */
 export function renderOpenclawConfig(args: {
   gatewayToken: string
   openRouterApiKey: string
   model: string
   fallbackModel: string
+  domain?: string | null
+  ipAddress?: string | null
   soulMd?: string | null
 }): string {
+  const allowedOrigin = args.domain
+    ? `https://${args.domain}`
+    : args.ipAddress
+      ? `http://${args.ipAddress}:${OPENCLAW_GATEWAY_PORT}`
+      : `http://localhost:${OPENCLAW_GATEWAY_PORT}`
+
   return `{
   gateway: {
     port: ${OPENCLAW_GATEWAY_PORT},
-    bind: "lan",
+    bind: "localhost",
     auth: {
       token: ${JSON.stringify(args.gatewayToken)},
+    },
+    remote: {
+      token: ${JSON.stringify(args.gatewayToken)},
+    },
+    trustedProxies: ["127.0.0.1"],
+    controlUi: {
+      allowedOrigins: [${JSON.stringify(allowedOrigin)}],
+      dangerouslyDisableDeviceAuth: true,
     },
   },
   agents: {
@@ -93,16 +113,28 @@ export function renderOpenclawConfig(args: {
  * Caddy reverse-proxies to the OpenClaw Gateway on loopback.
  * With a domain, Caddy auto-provisions Let's Encrypt TLS.
  * Without a domain, Caddy serves HTTP on :80.
+ *
+ * Headers forwarded to OpenClaw:
+ *  - Host (original request host, required for multi-tenant routing)
+ *  - X-Real-IP (real client IP for audit/rate-limiting)
+ *  - X-Forwarded-Proto (scheme so OpenClaw knows TLS terminated at proxy)
+ *  - X-Forwarded-For / Authorization are passed by Caddy automatically
  */
 export function renderCaddyfile(args: { domain?: string | null }): string {
+  const upstreamBlock = `reverse_proxy localhost:${OPENCLAW_GATEWAY_PORT} {
+    header_up Host {host}
+    header_up X-Real-IP {remote_host}
+    header_up X-Forwarded-Proto {scheme}
+  }`
+
   if (args.domain && args.domain.trim().length > 0) {
     return `${args.domain} {
-  reverse_proxy localhost:${OPENCLAW_GATEWAY_PORT}
+  ${upstreamBlock}
 }
 `
   }
   return `:80 {
-  reverse_proxy localhost:${OPENCLAW_GATEWAY_PORT}
+  ${upstreamBlock}
 }
 `
 }

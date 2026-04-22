@@ -3,7 +3,7 @@ import { auth } from "@/auth"
 import { db, instances, eq } from "@/db"
 import { whereUserInstanceVisible } from "@/lib/instance-queries"
 import { sshInstallCaddyfile, sshRun } from "@/lib/ssh"
-import { renderCaddyfile, OPENCLAW_GATEWAY_PORT } from "@/lib/openclaw"
+import { renderCaddyfile, OPENCLAW_GATEWAY_PORT, OPENCLAW_SERVICE_NAME } from "@/lib/openclaw"
 
 export async function POST(
   req: NextRequest,
@@ -44,6 +44,16 @@ export async function POST(
   try {
     const caddyContent = renderCaddyfile({ domain })
     await sshInstallCaddyfile(target, caddyContent)
+
+    const allowedOrigin = domain
+      ? `https://${domain}`
+      : `http://${instance.ipAddress}:${OPENCLAW_GATEWAY_PORT}`
+    const OPENCLAW_DIR = "/opt/openclaw"
+    await sshRun(
+      target,
+      `sudo -u openclaw HOME=${OPENCLAW_DIR} /usr/bin/openclaw config set gateway.controlUi.allowedOrigins '${JSON.stringify([allowedOrigin])}' 2>&1`,
+    )
+    await sshRun(target, `systemctl restart ${OPENCLAW_SERVICE_NAME} 2>&1 || true`)
   } catch (err) {
     return NextResponse.json(
       { error: `Failed to update Caddy config: ${err instanceof Error ? err.message : String(err)}` },

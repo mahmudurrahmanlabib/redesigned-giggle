@@ -555,11 +555,19 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     }
 
     /* --- 8. Overlay our settings via openclaw config set ------------ */
+    const allowedOrigin = instance.domain
+      ? `https://${instance.domain}`
+      : `http://${ipAddress}:${OPENCLAW_GATEWAY_PORT}`
+
     const configCmds = [
       `openclaw config set gateway.port ${OPENCLAW_GATEWAY_PORT}`,
-      `openclaw config set gateway.bind lan`,
+      `openclaw config set gateway.bind localhost`,
       `openclaw config set gateway.auth.token ${JSON.stringify(gatewayToken)}`,
-      `openclaw config set gateway.controlUi.allowedOrigins '["*"]'`,
+      `openclaw config set gateway.remote.token ${JSON.stringify(gatewayToken)}`,
+      `openclaw config set gateway.trustedProxies '["127.0.0.1"]'`,
+      `openclaw config set gateway.controlUi.allowedOrigins '${JSON.stringify([allowedOrigin])}'`,
+      `openclaw config set gateway.controlUi.allowInsecureAuth true`,
+      `openclaw config set gateway.controlUi.dangerouslyDisableDeviceAuth true`,
       `openclaw config set agents.defaults.model.primary ${JSON.stringify(route.model)}`,
       `openclaw config set agents.defaults.model.fallbacks '${JSON.stringify([route.fallback])}'`,
     ]
@@ -1077,14 +1085,20 @@ export async function reprovisionBotEnv(instance: Instance): Promise<void> {
       openRouterApiKey: OPENROUTER_API_KEY(),
     })
 
+    const gatewayToken = instance.gatewayTokenEnc
+      ? decryptSecret(instance.gatewayTokenEnc)
+      : generateGatewayToken()
+
     await sshWriteFile(
       target,
       `${OPENCLAW_DIR}/.openclaw/openclaw.json`,
       renderOpenclawConfig({
-        gatewayToken: generateGatewayToken(),
+        gatewayToken,
         openRouterApiKey: OPENROUTER_API_KEY(),
         model: route.model,
         fallbackModel: route.fallback,
+        domain: instance.domain,
+        ipAddress: instance.ipAddress,
         soulMd: instance.soulMd,
       }),
     )
