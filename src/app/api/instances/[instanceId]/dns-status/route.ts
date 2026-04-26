@@ -31,11 +31,15 @@ export async function GET(
     return NextResponse.json({ error: "Instance not found" }, { status: 404 })
   }
 
-  // No domain configured = no DNS/TLS state. Do NOT synthesize "ready"/"issued"
-  // here — those columns stay NULL until the user opts in with a real domain.
-  if (!instance.domain) {
+  // Probe the managed Cloudflare subdomain when present, otherwise the
+  // user-supplied custom domain. If neither is set, DNS state stays NULL.
+  const probeHost = instance.managedSubdomain ?? instance.domain
+  const isManaged = Boolean(instance.managedSubdomain)
+
+  if (!probeHost) {
     return NextResponse.json({
       domain: null,
+      managedSubdomain: null,
       dnsStatus: null,
       tlsStatus: null,
       resolvedIps: [],
@@ -46,8 +50,12 @@ export async function GET(
   let resolvedIps: string[] = []
   let dnsStatus: DnsStatus = (instance.dnsStatus as DnsStatus) ?? "pending"
   try {
-    resolvedIps = await dns.promises.resolve4(instance.domain)
-    if (instance.ipAddress && resolvedIps.includes(instance.ipAddress)) {
+    resolvedIps = await dns.promises.resolve4(probeHost)
+    if (isManaged) {
+      // Cloudflare-proxied: any A record means CF anycast IPs are live —
+      // that's "ready" from our perspective. The origin IP is hidden.
+      if (resolvedIps.length > 0) dnsStatus = "ready"
+    } else if (instance.ipAddress && resolvedIps.includes(instance.ipAddress)) {
       dnsStatus = "ready"
     } else if (resolvedIps.length > 0) {
       dnsStatus = "propagating"
@@ -60,7 +68,7 @@ export async function GET(
   let tlsStatus: TlsStatus = (instance.tlsStatus as TlsStatus) ?? "pending"
   if (dnsStatus === "ready") {
     try {
-      const probe = await fetch(`https://${instance.domain}/`, {
+      const probe = await fetch(`https://${probeHost}/`, {
         method: "HEAD",
         redirect: "manual",
         signal: AbortSignal.timeout(5000),
@@ -80,6 +88,7 @@ export async function GET(
 
   return NextResponse.json({
     domain: instance.domain,
+    managedSubdomain: instance.managedSubdomain,
     dnsStatus,
     tlsStatus,
     resolvedIps,

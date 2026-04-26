@@ -29,6 +29,8 @@ export function buildStackScript(): string {
   const ver = OPENCLAW_VERSION()
   return `#!/bin/bash
 # <UDF name="ssh_public_key" label="SSH public key to authorize for root" />
+# <UDF name="cf_origin_cert_b64" label="Base64 Cloudflare Origin Cert PEM (wildcard *.sovereignclaw.xyz)" default="" />
+# <UDF name="cf_origin_key_b64" label="Base64 Cloudflare Origin Cert private key" default="" />
 set -euxo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
@@ -65,6 +67,29 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmo
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
 apt-get update -y
 apt-get install -y caddy
+
+# --- Phase 9: Cloudflare Origin Certificate (wildcard *.sovereignclaw.xyz) ---
+# Provisioned by the platform via StackScript UDFs. If empty, the per-agent
+# managed-subdomain vhost won't be served, but user-custom-domain LE keeps working.
+if [ -n "\${CF_ORIGIN_CERT_B64:-}" ] && [ -n "\${CF_ORIGIN_KEY_B64:-}" ]; then
+  install -d -m 0750 -o caddy -g caddy /etc/caddy/cf
+  echo "$CF_ORIGIN_CERT_B64" | base64 -d > /etc/caddy/cf/origin.pem
+  echo "$CF_ORIGIN_KEY_B64" | base64 -d > /etc/caddy/cf/origin.key
+  chown caddy:caddy /etc/caddy/cf/origin.pem /etc/caddy/cf/origin.key
+  chmod 0640 /etc/caddy/cf/origin.pem
+  chmod 0600 /etc/caddy/cf/origin.key
+
+  # Caddy snippet: any *.sovereignclaw.xyz hostname uses the wildcard origin cert.
+  # The render in domain/route.ts owns the user-custom-domain block and includes
+  # this file via "import /etc/caddy/snippets/sovereignclaw.caddy".
+  install -d -m 0755 /etc/caddy/snippets
+  cat > /etc/caddy/snippets/sovereignclaw.caddy <<'CFSNIP'
+*.sovereignclaw.xyz {
+  tls /etc/caddy/cf/origin.pem /etc/caddy/cf/origin.key
+  reverse_proxy 127.0.0.1:3000
+}
+CFSNIP
+fi
 
 # --- Firewall ---
 ufw allow 22/tcp || true

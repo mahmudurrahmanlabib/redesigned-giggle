@@ -45,6 +45,7 @@ import {
   linodeGetVM,
   linodeGetVMOrNull,
 } from "@/lib/linode"
+import { createAgentSubdomain, deleteAgentSubdomain } from "@/lib/agent-dns"
 import { generateMockIp } from "@/lib/instance"
 import { routeModel } from "@/lib/model-router"
 import type { BudgetTier } from "@/lib/agent-config"
@@ -414,7 +415,11 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
         region: linodeRegion,
         root_pass: rootPassword,
         stackscript_id: stackScriptId,
-        stackscript_data: { ssh_public_key: publicKey ?? "" },
+        stackscript_data: {
+          ssh_public_key: publicKey ?? "",
+          cf_origin_cert_b64: process.env.CLOUDFLARE_ORIGIN_CERT_PEM ?? "",
+          cf_origin_key_b64: process.env.CLOUDFLARE_ORIGIN_CERT_KEY ?? "",
+        },
         authorized_keys: publicKey ? [publicKey] : undefined,
         tags: ["sovereignml", "openclaw", "vps"],
       })
@@ -444,6 +449,38 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
         .update(instances)
         .set({ ipAddress })
         .where(eq(instances.id, instance.id))
+    }
+
+    /* --- 2b. Cloudflare managed subdomain --------------------------- */
+    if (process.env.CLOUDFLARE_API_TOKEN && process.env.CLOUDFLARE_ZONE_ID) {
+      try {
+        const { name, recordId } = await createAgentSubdomain(
+          instance.id,
+          ipAddress,
+        )
+        await db
+          .update(instances)
+          .set({
+            managedSubdomain: name,
+            cfRecordId: recordId,
+            dnsStatus: "propagating",
+          })
+          .where(eq(instances.id, instance.id))
+        await logInstanceEvent({
+          instanceId: instance.id,
+          stage: currentStage,
+          message: `Cloudflare DNS upserted: ${name} → ${ipAddress} (proxied)`,
+        })
+      } catch (cfErr) {
+        await logInstanceEvent({
+          instanceId: instance.id,
+          stage: currentStage,
+          message: `Cloudflare DNS upsert failed (continuing without managed subdomain): ${
+            cfErr instanceof Error ? cfErr.message : String(cfErr)
+          }`,
+          level: "warn",
+        })
+      }
     }
 
     const target: SshTarget = { host: ipAddress }
@@ -937,6 +974,39 @@ export async function deleteBot(instance: Instance): Promise<DeleteResult> {
     action: "started",
     message: "Deletion started.",
   })
+
+  // Cloudflare managed subdomain cleanup. Best-effort: a failure here must not
+  // block VM deletion. Reconciler can sweep orphans later.
+  if (
+    process.env.CLOUDFLARE_API_TOKEN &&
+    process.env.CLOUDFLARE_ZONE_ID &&
+    (instance.managedSubdomain || instance.cfRecordId)
+  ) {
+    try {
+      await deleteAgentSubdomain(instance.id, instance.cfRecordId)
+      await db
+        .update(instances)
+        .set({ managedSubdomain: null, cfRecordId: null })
+        .where(eq(instances.id, instance.id))
+      await logInstanceEvent({
+        instanceId: instance.id,
+        stage: "delete",
+        action: "cf_dns_deleted",
+        message: `Cloudflare DNS record removed for ${instance.managedSubdomain ?? instance.id}.`,
+      })
+    } catch (cfErr) {
+      await logInstanceEvent({
+        instanceId: instance.id,
+        level: "warn",
+        stage: "delete",
+        action: "cf_dns_delete",
+        result: "error",
+        message: `Cloudflare DNS delete failed (continuing): ${
+          cfErr instanceof Error ? cfErr.message : String(cfErr)
+        }`,
+      })
+    }
+  }
 
   // Shared-cluster path: docker rm. No VM to delete.
   if (!isVps(instance)) {

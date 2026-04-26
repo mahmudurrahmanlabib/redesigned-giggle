@@ -10,8 +10,6 @@ const navItems = [
   { href: "/dashboard/monitoring", label: "Monitoring" },
   { href: "/dashboard/billing", label: "Billing" },
   { href: "/dashboard/subscriptions", label: "Subscriptions" },
-  { href: "/dashboard/api-keys", label: "API Keys" },
-  { href: "/dashboard/ssh-keys", label: "SSH Keys" },
   { href: "/dashboard/team", label: "Team" },
   { href: "/dashboard/audit-log", label: "Audit Log" },
   { href: "/dashboard/account", label: "Settings" },

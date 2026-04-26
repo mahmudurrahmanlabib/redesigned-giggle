@@ -283,6 +283,8 @@ export const instances = pgTable(
     domain: text(),
     dnsStatus: text(),
     tlsStatus: text(),
+    managedSubdomain: text(),
+    cfRecordId: text(),
     openclawAdminEmail: text(),
     openclawAdminPasswordEnc: text(),
     gatewayTokenEnc: text(),
@@ -429,6 +431,72 @@ export const domainVerifications = pgTable(
   ],
 )
 
+// ──────────────────────────────────────────────────────────────────────
+// Teams / memberships / invites
+// ──────────────────────────────────────────────────────────────────────
+
+export const teams = pgTable(
+  "Team",
+  {
+    id: cuid().primaryKey(),
+    name: text().notNull(),
+    ownerId: text()
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    seatLimit: integer().default(5).notNull(),
+    createdAt: now(),
+    updatedAt: timestamp({ mode: "date", withTimezone: false })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [index("Team_ownerId_idx").on(t.ownerId)],
+)
+
+// Roles: owner | admin | developer | viewer
+export const memberships = pgTable(
+  "Membership",
+  {
+    teamId: text()
+      .notNull()
+      .references(() => teams.id, { onDelete: "cascade" }),
+    userId: text()
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: text().default("developer").notNull(),
+    createdAt: now(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.teamId, t.userId], name: "Membership_pkey" }),
+    index("Membership_userId_idx").on(t.userId),
+  ],
+)
+
+export const teamInvites = pgTable(
+  "TeamInvite",
+  {
+    id: cuid().primaryKey(),
+    teamId: text()
+      .notNull()
+      .references(() => teams.id, { onDelete: "cascade" }),
+    email: text().notNull(),
+    role: text().default("developer").notNull(),
+    token: text().notNull(),
+    invitedById: text()
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    expiresAt: timestamp({ mode: "date", withTimezone: false }).notNull(),
+    acceptedAt: timestamp({ mode: "date", withTimezone: false }),
+    revokedAt: timestamp({ mode: "date", withTimezone: false }),
+    createdAt: now(),
+  },
+  (t) => [
+    uniqueIndex("TeamInvite_token_key").on(t.token),
+    index("TeamInvite_teamId_idx").on(t.teamId),
+    index("TeamInvite_email_idx").on(t.email),
+  ],
+)
+
 export const adminNotes = pgTable(
   "AdminNote",
   {
@@ -456,6 +524,24 @@ export const usersRelations = relations(users, ({ many }) => ({
   adminNotes: many(adminNotes, { relationName: "userNotes" }),
   usageEvents: many(usageEvents),
   creditLedger: many(creditLedger),
+  ownedTeams: many(teams),
+  memberships: many(memberships),
+}))
+
+export const teamsRelations = relations(teams, ({ one, many }) => ({
+  owner: one(users, { fields: [teams.ownerId], references: [users.id] }),
+  memberships: many(memberships),
+  invites: many(teamInvites),
+}))
+
+export const membershipsRelations = relations(memberships, ({ one }) => ({
+  team: one(teams, { fields: [memberships.teamId], references: [teams.id] }),
+  user: one(users, { fields: [memberships.userId], references: [users.id] }),
+}))
+
+export const teamInvitesRelations = relations(teamInvites, ({ one }) => ({
+  team: one(teams, { fields: [teamInvites.teamId], references: [teams.id] }),
+  invitedBy: one(users, { fields: [teamInvites.invitedById], references: [users.id] }),
 }))
 
 export const accountsRelations = relations(accounts, ({ one }) => ({
