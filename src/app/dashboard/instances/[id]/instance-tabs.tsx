@@ -452,35 +452,68 @@ function ServerAccessCard({ instanceId, ipAddress }: { instanceId: string; ipAdd
 
 /* ───────────── PROVISIONING CARD ───────────── */
 const PROVISION_STEPS = [
-  { key: "Creating Linode VM", label: "Creating VM" },
-  { key: "Waiting for server to boot", label: "Booting server" },
-  { key: "Waiting for Docker", label: "Installing Docker" },
-  { key: "Server online", label: "Server online" },
-  { key: "Configuring firewall", label: "Configuring firewall" },
-  { key: "Writing OpenClaw", label: "Writing configuration" },
-  { key: "Starting OpenClaw", label: "Starting stack" },
-  { key: "Deployment complete", label: "Deployment complete" },
-  { key: "Starting provisioning", label: "Initializing" },
-  { key: "Selecting shared host", label: "Selecting host" },
-  { key: "Starting bot container", label: "Starting container" },
-  { key: "Mock-provisioned", label: "Provisioned" },
+  // VPS path
+  { match: "Creating VM", label: "Creating server" },
+  { match: "Waiting for boot", label: "Booting server" },
+  { match: "Cloudflare DNS upserted", label: "Setting up DNS" },
+  { match: "Waiting for SSH", label: "Connecting to server" },
+  { match: "Bootstrapping server", label: "Installing dependencies" },
+  { match: "bootstrap complete", label: "Server ready" },
+  { match: "Writing OpenClaw", label: "Writing configuration" },
+  { match: "systemctl start", label: "Starting service" },
+  { match: "is listening", label: "Health check passed" },
+  { match: "Deployment complete", label: "Deployment complete" },
+  // Shared-cluster path
+  { match: "Selecting shared host", label: "Selecting host" },
+  { match: "Starting bot container", label: "Starting container" },
+  // Dev / mock
+  { match: "Starting provisioning", label: "Initializing" },
+  { match: "Mock-provisioned", label: "Provisioned" },
 ] as const
+
+function useElapsedTimer(startTime: string | null, active: boolean) {
+  const [elapsed, setElapsed] = useState("")
+  useEffect(() => {
+    if (!active || !startTime) return
+    const start = new Date(startTime).getTime()
+    const tick = () => {
+      const s = Math.floor((Date.now() - start) / 1000)
+      const m = Math.floor(s / 60)
+      setElapsed(m > 0 ? `${m}m ${s % 60}s` : `${s}s`)
+    }
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [startTime, active])
+  return elapsed
+}
 
 function ProvisioningCard({ instance, logs }: { instance: InstanceLite; logs: LogLite[] }) {
   const logMessages = logs.map((l) => l.message)
   const isFailed = instance.status === "failed_provisioning"
   const isRunning = instance.status === "running"
+  const isActive = !isFailed && !isRunning
+
+  const earliestLog = logs.length > 0 ? logs[logs.length - 1]?.createdAt : null
+  const startTime = earliestLog ?? instance.createdAt
+  const elapsed = useElapsedTimer(startTime, isActive)
 
   const steps = PROVISION_STEPS.filter((s) =>
-    logMessages.some((m) => m.includes(s.key))
+    logMessages.some((m) => m.includes(s.match))
   )
 
   const lastError = logs.find((l) => l.level === "error")
 
+  const title = isFailed
+    ? "Provisioning Failed"
+    : isRunning
+      ? "Provisioning Complete"
+      : `Provisioning${elapsed ? ` \u00b7 ${elapsed}` : ""}`
+
   return (
-    <Card title={isFailed ? "Provisioning Failed" : isRunning ? "Provisioning Complete" : "Provisioning"}>
+    <Card title={title}>
       <div className="space-y-3">
-        {steps.length === 0 && !isFailed && !isRunning && (
+        {steps.length === 0 && isActive && (
           <div className="flex items-center gap-3">
             <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
             <span className="text-sm text-[var(--text-secondary)]">Preparing deployment...</span>
@@ -490,7 +523,7 @@ function ProvisioningCard({ instance, logs }: { instance: InstanceLite; logs: Lo
           const isLast = i === steps.length - 1
           const isDone = !isLast || isRunning
           return (
-            <div key={step.key} className="flex items-center gap-3">
+            <div key={step.match} className="flex items-center gap-3">
               {isDone ? (
                 <span className="w-4 h-4 flex items-center justify-center text-[10px] font-bold border border-[var(--accent-color)] bg-[var(--accent-color)] text-black">
                   &#10003;
@@ -514,11 +547,6 @@ function ProvisioningCard({ instance, logs }: { instance: InstanceLite; logs: Lo
         {isRunning && (
           <p className="text-xs font-mono text-[var(--accent-color)] mt-2">
             Agent is live and ready to accept requests.
-          </p>
-        )}
-        {!isFailed && !isRunning && (
-          <p className="text-[10px] font-mono text-[var(--text-secondary)]/70 mt-2">
-            Polling every 3s for updates...
           </p>
         )}
       </div>

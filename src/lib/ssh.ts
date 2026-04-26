@@ -20,6 +20,8 @@ async function connect(target: SshTarget): Promise<NodeSSH> {
     username: target.username ?? "root",
     privateKey: loadPrivateKey(),
     readyTimeout: 20_000,
+    keepaliveInterval: 10_000,
+    keepaliveCountMax: 3,
   })
   return ssh
 }
@@ -83,7 +85,17 @@ export async function sshWaitReady(
   while (Date.now() < deadline) {
     try {
       const r = await sshRun(target, "echo ok")
-      if (r.code === 0) return
+      if (r.code === 0) {
+        // Verify stability: wait 5s and check again to ensure sshd
+        // isn't transiently available during cloud-init.
+        await new Promise((r) => setTimeout(r, 5_000))
+        try {
+          const r2 = await sshRun(target, "echo ok")
+          if (r2.code === 0) return
+        } catch {
+          // Second check failed — sshd went away, keep polling
+        }
+      }
     } catch (err) {
       lastErr = err
     }
@@ -100,94 +112,172 @@ function shellEscape(value: string): string {
 }
 
 /* ------------------------------------------------------------------ */
-/* VPS bootstrap — replaces the old StackScript approach               */
+/* VPS bootstrap — server-side script, immune to SSH drops             */
 /* ------------------------------------------------------------------ */
 
 export type BootstrapOpts = {
   openclawVersion: string
   cfOriginCertPem?: string
   cfOriginKeyPem?: string
-  /** Callback fired after each step for structured logging. */
-  onStep?: (step: SshStepResult) => Promise<void>
+}
+
+const BOOTSTRAP_STATUS = "/tmp/bootstrap.status"
+const BOOTSTRAP_LOG = "/var/log/bootstrap.log"
+
+function buildBootstrapScript(opts: BootstrapOpts): string {
+  let cfBlock = ""
+  if (opts.cfOriginCertPem && opts.cfOriginKeyPem) {
+    const certB64 = Buffer.from(opts.cfOriginCertPem, "utf8").toString("base64")
+    const keyB64 = Buffer.from(opts.cfOriginKeyPem, "utf8").toString("base64")
+    cfBlock = `
+step "cf_origin_cert"
+install -d -m 0750 -o caddy -g caddy /etc/caddy/cf
+echo '${certB64}' | base64 -d > /etc/caddy/cf/origin.pem
+echo '${keyB64}' | base64 -d > /etc/caddy/cf/origin.key
+chown caddy:caddy /etc/caddy/cf/origin.pem /etc/caddy/cf/origin.key
+chmod 0640 /etc/caddy/cf/origin.pem
+chmod 0600 /etc/caddy/cf/origin.key
+
+install -d -m 0755 /etc/caddy/snippets
+cat > /etc/caddy/snippets/sovereignclaw.caddy <<'CFSNIP'
+*.sovereignclaw.xyz {
+  tls /etc/caddy/cf/origin.pem /etc/caddy/cf/origin.key
+  reverse_proxy 127.0.0.1:18789
+}
+CFSNIP
+`
+  }
+
+  return `#!/bin/bash
+set -euo pipefail
+
+LOG="${BOOTSTRAP_LOG}"
+STATUS="${BOOTSTRAP_STATUS}"
+CURRENT_STEP="init"
+
+cleanup() {
+  local ec=$?
+  if [ $ec -ne 0 ]; then
+    echo "failed:\${CURRENT_STEP}" > "$STATUS"
+    echo "=== BOOTSTRAP FAILED at step \${CURRENT_STEP} (exit $ec) ===" >> "$LOG"
+  fi
+}
+trap cleanup EXIT
+
+echo "running" > "$STATUS"
+exec > >(tee -a "$LOG") 2>&1
+echo "=== Bootstrap started at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+
+step() { CURRENT_STEP="$1"; echo "=== STEP: $1 ===" ; }
+
+step "apt_update"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get upgrade -y
+
+step "build_deps"
+apt-get install -y ca-certificates curl gnupg ufw git build-essential
+
+step "node_setup"
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y nodejs
+node -v && npm -v
+
+step "create_user"
+id openclaw >/dev/null 2>&1 || useradd --system --home-dir /opt/openclaw --shell /usr/sbin/nologin openclaw
+mkdir -p /opt/openclaw
+chown -R openclaw:openclaw /opt/openclaw
+mkdir -p /var/tmp/openclaw-compile-cache
+chown openclaw:openclaw /var/tmp/openclaw-compile-cache
+
+step "install_openclaw"
+SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install -g openclaw@${shellEscape(opts.openclawVersion)}
+openclaw --version
+
+step "install_caddy"
+apt-get install -y debian-keyring debian-archive-keyring apt-transport-https
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+apt-get update -y
+apt-get install -y caddy
+${cfBlock}
+step "firewall"
+ufw allow 22/tcp || true
+ufw allow 80/tcp || true
+ufw allow 443/tcp || true
+yes | ufw enable || true
+
+echo "=== Bootstrap completed at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+echo "done" > "$STATUS"
+`
 }
 
 /**
- * Full server setup over SSH. Runs each step sequentially with error
- * checking — replaces the fire-and-forget StackScript.
+ * Upload a bootstrap script and run it server-side with nohup.
+ * The script is immune to SSH connection drops — it runs as a local
+ * process on the VM. We poll a status file for completion.
  */
 export async function sshBootstrapVps(
   target: SshTarget,
   opts: BootstrapOpts,
 ): Promise<void> {
-  const stage = "bootstrap"
-
-  async function run(label: string, command: string): Promise<SshStepResult> {
-    const step = await sshRunLogged(target, command, stage)
-    if (opts.onStep) await opts.onStep(step)
-    if (step.exitCode !== 0 && step.exitCode !== null) {
-      throw new Error(`Bootstrap failed at "${label}" (exit ${step.exitCode}): ${step.stderr || step.stdout}`)
-    }
-    return step
-  }
-
-  await run("apt_update", "export DEBIAN_FRONTEND=noninteractive && apt-get update -y && apt-get upgrade -y")
-  await run("build_deps", "export DEBIAN_FRONTEND=noninteractive && apt-get install -y ca-certificates curl gnupg ufw git build-essential")
-
-  await run("node_setup", [
-    "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -",
-    "apt-get install -y nodejs",
-    "node -v && npm -v",
-  ].join(" && "))
-
-  await run("create_user", [
-    "id openclaw >/dev/null 2>&1 || useradd --system --home-dir /opt/openclaw --shell /usr/sbin/nologin openclaw",
-    "mkdir -p /opt/openclaw",
-    "chown -R openclaw:openclaw /opt/openclaw",
-    "mkdir -p /var/tmp/openclaw-compile-cache",
-    "chown openclaw:openclaw /var/tmp/openclaw-compile-cache",
-  ].join(" && "))
-
-  const ver = shellEscape(opts.openclawVersion)
-  await run("install_openclaw", `SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install -g openclaw@${ver} && openclaw --version`)
-
-  await run("install_caddy", [
-    "apt-get install -y debian-keyring debian-archive-keyring apt-transport-https",
-    "curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg",
-    "curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list",
-    "apt-get update -y",
-    "apt-get install -y caddy",
-  ].join(" && "))
-
-  if (opts.cfOriginCertPem && opts.cfOriginKeyPem) {
-    const certB64 = Buffer.from(opts.cfOriginCertPem, "utf8").toString("base64")
-    const keyB64 = Buffer.from(opts.cfOriginKeyPem, "utf8").toString("base64")
-    await run("cf_origin_cert", [
-      "install -d -m 0750 -o caddy -g caddy /etc/caddy/cf",
-      `echo ${shellEscape(certB64)} | base64 -d > /etc/caddy/cf/origin.pem`,
-      `echo ${shellEscape(keyB64)} | base64 -d > /etc/caddy/cf/origin.key`,
-      "chown caddy:caddy /etc/caddy/cf/origin.pem /etc/caddy/cf/origin.key",
-      "chmod 0640 /etc/caddy/cf/origin.pem",
-      "chmod 0600 /etc/caddy/cf/origin.key",
-    ].join(" && "))
-
-    const snippet = `*.sovereignclaw.xyz {
-  tls /etc/caddy/cf/origin.pem /etc/caddy/cf/origin.key
-  reverse_proxy 127.0.0.1:18789
+  const script = buildBootstrapScript(opts)
+  await sshWriteFile(target, "/tmp/bootstrap.sh", script, { mode: "755" })
+  await sshRun(target, `nohup bash /tmp/bootstrap.sh > /dev/null 2>&1 &`)
+  await sshPollBootstrap(target)
 }
-`
-    const snippetB64 = Buffer.from(snippet, "utf8").toString("base64")
-    await run("caddy_snippet", [
-      "install -d -m 0755 /etc/caddy/snippets",
-      `echo ${shellEscape(snippetB64)} | base64 -d > /etc/caddy/snippets/sovereignclaw.caddy`,
-    ].join(" && "))
+
+/**
+ * Poll the bootstrap status file until the script finishes or times out.
+ * SSH connection errors during polling are swallowed — the script keeps
+ * running server-side regardless.
+ */
+export async function sshPollBootstrap(
+  target: SshTarget,
+  timeoutMs = 600_000,
+  pollMs = 10_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, pollMs))
+    let status: string
+    try {
+      const r = await sshRun(target, `cat ${BOOTSTRAP_STATUS} 2>/dev/null || echo pending`)
+      status = r.stdout.trim()
+    } catch {
+      // SSH connection failed — script is still running, keep polling
+      continue
+    }
+
+    if (status === "done") return
+
+    if (status.startsWith("failed:")) {
+      const failedStep = status.slice(7)
+      let logTail = ""
+      try {
+        const logResult = await sshRun(target, `tail -200 ${BOOTSTRAP_LOG} 2>/dev/null || echo '(no log)'`)
+        logTail = logResult.stdout
+      } catch {
+        logTail = "(could not read bootstrap log)"
+      }
+      throw new Error(
+        `Bootstrap failed at step "${failedStep}". Log tail:\n${logTail.slice(0, 8000)}`
+      )
+    }
+    // status is "running" or "pending" — keep polling
   }
 
-  await run("firewall", [
-    "ufw allow 22/tcp || true",
-    "ufw allow 80/tcp || true",
-    "ufw allow 443/tcp || true",
-    "yes | ufw enable || true",
-  ].join(" && "))
+  // Timeout — try to read log for diagnostics
+  let logTail = ""
+  try {
+    const logResult = await sshRun(target, `tail -100 ${BOOTSTRAP_LOG} 2>/dev/null || echo '(no log)'`)
+    logTail = logResult.stdout
+  } catch {
+    logTail = "(could not read bootstrap log)"
+  }
+  throw new Error(
+    `Bootstrap timed out after ${timeoutMs / 1000}s. Log tail:\n${logTail.slice(0, 8000)}`
+  )
 }
 
 /* ------------------------------------------------------------------ */

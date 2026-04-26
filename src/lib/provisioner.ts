@@ -481,7 +481,6 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       openclawVersion: OPENCLAW_VERSION(),
       cfOriginCertPem: process.env.CLOUDFLARE_ORIGIN_CERT_PEM,
       cfOriginKeyPem: process.env.CLOUDFLARE_ORIGIN_CERT_KEY,
-      onStep: (step) => logSshStep(instance.id, step),
     })
     await logInstanceEvent({
       instanceId: instance.id,
