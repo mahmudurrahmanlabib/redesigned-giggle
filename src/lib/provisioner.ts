@@ -66,6 +66,12 @@ function shouldSkipOpenclawOnboard(): boolean {
   )
 }
 
+function openclawOnboardTimeoutSec(): number {
+  const raw = process.env.OPENCLAW_ONBOARD_TIMEOUT_SEC
+  const parsed = raw ? parseInt(raw, 10) : NaN
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 300
+}
+
 function bashSingleQuoteForScript(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
 }
@@ -79,14 +85,16 @@ function buildVpsPostBootstrapBurstScript(opts: {
   caddyB64: string
   unitB64: string
   skipOnboard: boolean
+  onboardTimeoutSec: number
   /** argv after `openclaw` binary, one `config set` per row */
   openclawConfigArgss: string[][]
 }): string {
   const skipFlag = opts.skipOnboard ? "1" : "0"
+  const onboardTimeout = String(opts.onboardTimeoutSec)
   const configLines = opts.openclawConfigArgss
     .map(
       (argv) =>
-        `sudo -u openclaw HOME=${bashSingleQuoteForScript(OPENCLAW_DIR)} /usr/bin/openclaw ${openclawCliArgs(...argv)} 2>&1 || exit 1`,
+        `timeout 30s sudo -u openclaw HOME=${bashSingleQuoteForScript(OPENCLAW_DIR)} /usr/bin/openclaw ${openclawCliArgs(...argv)} </dev/null 2>&1 || exit 1`,
     )
     .join("\n")
 
@@ -107,7 +115,7 @@ if [ "${skipFlag}" = "1" ]; then
   echo "provision: onboard skipped (SKIP_OPENCLAW_ONBOARD=1 or OPENCLAW_ONBOARD=0)"
 else
   set +e
-  sudo -u openclaw HOME="\${OC_HOME}" /usr/bin/openclaw onboard --non-interactive --mode local --auth-choice skip --accept-risk --skip-health 2>&1
+  timeout --kill-after=10s ${onboardTimeout}s sudo -u openclaw HOME="\${OC_HOME}" /usr/bin/openclaw onboard --non-interactive --mode local --auth-choice skip --accept-risk --skip-health </dev/null 2>&1
   ONBOARD_EC=$?
   set -e
 fi
@@ -678,6 +686,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       caddyB64,
       unitB64,
       skipOnboard,
+      onboardTimeoutSec: openclawOnboardTimeoutSec(),
       openclawConfigArgss,
     })
 
