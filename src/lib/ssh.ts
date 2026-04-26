@@ -245,7 +245,8 @@ export async function sshBootstrapVps(
  * SSH connection errors during polling are swallowed — the script keeps
  * running server-side regardless.
  */
-const BOOTSTRAP_LOG_TAIL_CHARS = 14_000
+/** Last bytes of bootstrap.log (must be end of file — apt/npm can emit huge lines). */
+const BOOTSTRAP_LOG_TAIL_BYTES = 24_000
 
 export async function sshPollBootstrap(
   target: SshTarget,
@@ -270,13 +271,16 @@ export async function sshPollBootstrap(
       const failedStep = status.slice(7)
       let logTail = ""
       try {
-        const logResult = await sshRun(target, `tail -400 ${BOOTSTRAP_LOG} 2>/dev/null || echo '(no log)'`)
+        const logResult = await sshRun(
+          target,
+          `tail -c ${BOOTSTRAP_LOG_TAIL_BYTES} ${BOOTSTRAP_LOG} 2>/dev/null || echo '(no log)'`,
+        )
         logTail = logResult.stdout
       } catch {
         logTail = "(could not read bootstrap log)"
       }
       throw new Error(
-        `Bootstrap failed at step "${failedStep}". Log tail:\n${logTail.slice(0, BOOTSTRAP_LOG_TAIL_CHARS)}`
+        `Bootstrap failed at step "${failedStep}". Log tail (last ${BOOTSTRAP_LOG_TAIL_BYTES} bytes):\n${logTail}`,
       )
     }
     // status is "running" or "pending" — keep polling
@@ -285,13 +289,16 @@ export async function sshPollBootstrap(
   // Timeout — try to read log for diagnostics
   let logTail = ""
   try {
-    const logResult = await sshRun(target, `tail -200 ${BOOTSTRAP_LOG} 2>/dev/null || echo '(no log)'`)
+    const logResult = await sshRun(
+      target,
+      `tail -c ${BOOTSTRAP_LOG_TAIL_BYTES} ${BOOTSTRAP_LOG} 2>/dev/null || echo '(no log)'`,
+    )
     logTail = logResult.stdout
   } catch {
     logTail = "(could not read bootstrap log)"
   }
   throw new Error(
-    `Bootstrap timed out after ${timeoutMs / 1000}s. Log tail:\n${logTail.slice(0, BOOTSTRAP_LOG_TAIL_CHARS)}`
+    `Bootstrap timed out after ${timeoutMs / 1000}s. Log tail (last ${BOOTSTRAP_LOG_TAIL_BYTES} bytes):\n${logTail}`,
   )
 }
 
