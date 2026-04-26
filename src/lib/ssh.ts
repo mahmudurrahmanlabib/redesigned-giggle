@@ -28,12 +28,48 @@ async function connect(target: SshTarget): Promise<NodeSSH> {
 
 export type SshRunResult = { stdout: string; stderr: string; code: number | null }
 
+/**
+ * Wall-clock guard around `ssh.execCommand`. node-ssh keepalives detect dead
+ * TCP but not application-level stalls (a remote step that hangs while the
+ * channel stays open). Promise.race against a setTimeout ensures the caller
+ * always gets a result within the budget; on timeout we dispose the
+ * connection and throw, which propagates as a normal provisioning failure.
+ */
+async function execWithTimeout(
+  ssh: NodeSSH,
+  command: string,
+  timeoutMs: number | undefined,
+  label: string,
+): Promise<SshRunResult> {
+  const exec = ssh.execCommand(command).then((r) => ({
+    stdout: r.stdout,
+    stderr: r.stderr,
+    code: r.code ?? null,
+  }))
+  if (!timeoutMs || timeoutMs <= 0) return exec
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`)),
+      timeoutMs,
+    )
+  })
+  try {
+    return await Promise.race([exec, timeout])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 /** Run an arbitrary command on a host. Throws if the SSH connect itself fails. */
-export async function sshRun(target: SshTarget, command: string): Promise<SshRunResult> {
+export async function sshRun(
+  target: SshTarget,
+  command: string,
+  opts: { timeoutMs?: number } = {},
+): Promise<SshRunResult> {
   const ssh = await connect(target)
   try {
-    const r = await ssh.execCommand(command)
-    return { stdout: r.stdout, stderr: r.stderr, code: r.code ?? null }
+    return await execWithTimeout(ssh, command, opts.timeoutMs, "ssh command")
   } finally {
     ssh.dispose()
   }
@@ -43,13 +79,16 @@ export async function sshRun(target: SshTarget, command: string): Promise<SshRun
  * Run a multi-line bash script in a single SSH session (one connect/auth).
  * Script is sent as base64 so quoting/special characters are safe.
  */
-export async function sshRunScript(target: SshTarget, bashScript: string): Promise<SshRunResult> {
+export async function sshRunScript(
+  target: SshTarget,
+  bashScript: string,
+  opts: { timeoutMs?: number } = {},
+): Promise<SshRunResult> {
   const b64 = Buffer.from(bashScript, "utf8").toString("base64")
   const command = `echo '${b64}' | base64 -d | bash`
   const ssh = await connect(target)
   try {
-    const r = await ssh.execCommand(command)
-    return { stdout: r.stdout, stderr: r.stderr, code: r.code ?? null }
+    return await execWithTimeout(ssh, command, opts.timeoutMs, "ssh script")
   } finally {
     ssh.dispose()
   }
@@ -102,9 +141,10 @@ export async function sshRunScriptLogged(
   bashScript: string,
   stage: string,
   commandSummary: string,
+  opts: { timeoutMs?: number } = {},
 ): Promise<SshStepResult> {
   const start = Date.now()
-  const result = await sshRunScript(target, bashScript)
+  const result = await sshRunScript(target, bashScript, { timeoutMs: opts.timeoutMs })
   return {
     stage,
     command: commandSummary,

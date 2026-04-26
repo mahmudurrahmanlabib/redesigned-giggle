@@ -23,8 +23,8 @@ export type InstanceState = (typeof INSTANCE_STATES)[number]
 
 // Legal transitions. Source of truth — anything not listed here is rejected.
 const TRANSITIONS: Record<InstanceState, InstanceState[]> = {
-  pending: ["provisioning", "failed_provisioning"],
-  provisioning: ["running", "failed_provisioning"],
+  pending: ["provisioning", "failed_provisioning", "deleting"],
+  provisioning: ["running", "failed_provisioning", "deleting"],
   running: ["stopped", "deleting"],
   stopped: ["running", "deleting"],
   failed_provisioning: ["deleting", "provisioning"],

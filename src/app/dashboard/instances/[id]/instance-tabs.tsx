@@ -544,7 +544,80 @@ function ServerAccessCard({ instanceId, ipAddress }: { instanceId: string; ipAdd
   )
 }
 
+/* ───────────── GATEWAY TOKEN CARD ───────────── */
+function GatewayTokenCard({ instanceId }: { instanceId: string }) {
+  const [token, setToken] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+
+  function flash(msg: string) {
+    setToast(msg)
+    setTimeout(() => setToast(null), 3000)
+  }
+
+  async function reveal() {
+    setLoading(true)
+    try {
+      const r = await fetch(`/api/instances/${instanceId}/gateway-token`, { cache: "no-store" })
+      const j = (await r.json()) as { gatewayToken?: string; error?: string }
+      if (!r.ok) {
+        flash(j.error || "Failed to reveal token")
+        return
+      }
+      setToken(j.gatewayToken ?? null)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function copy() {
+    if (!token) return
+    try {
+      await navigator.clipboard.writeText(token)
+      flash("Token copied to clipboard.")
+    } catch {
+      flash("Copy failed — your browser blocked clipboard access.")
+    }
+  }
+
+  return (
+    <Card title="Gateway Token">
+      <p className="text-xs text-[var(--text-secondary)] mb-2">
+        Use this token to authenticate with the OpenClaw Control UI and API.
+      </p>
+      <p className="font-mono text-sm text-[var(--text-primary)] break-all bg-[var(--code-bg)] border border-[var(--border-color)] p-3">
+        {token ?? "gw_•••••••••••••••••••••"}
+      </p>
+      <div className="flex gap-2 mt-3">
+        <button
+          onClick={reveal}
+          disabled={loading}
+          className="px-3 py-1.5 text-xs uppercase tracking-[0.08em] bg-[var(--card-bg)] text-[var(--text-primary)] border border-[var(--border-color)] hover:border-[var(--accent-color)] font-mono disabled:opacity-50"
+        >
+          {loading ? "…" : "Reveal"}
+        </button>
+        {token && (
+          <button
+            onClick={copy}
+            className="px-3 py-1.5 text-xs uppercase tracking-[0.08em] bg-[var(--card-bg)] text-[var(--text-primary)] border border-[var(--border-color)] hover:border-[var(--accent-color)] font-mono"
+          >
+            Copy
+          </button>
+        )}
+      </div>
+      {toast && (
+        <div className="mt-3 px-3 py-1.5 text-xs font-mono text-[var(--text-primary)] bg-[var(--card-bg)] border border-[var(--accent-color)]/40">
+          {toast}
+        </div>
+      )}
+    </Card>
+  )
+}
+
 /* ───────────── PROVISIONING CARD ───────────── */
+// Order matters — these are rendered as a sequential checklist.
+// `match` strings come from `PROVISION_EVENT` in src/lib/provision-events.ts;
+// keep them in sync if either side changes.
 const PROVISION_STEPS = [
   // VPS path
   { match: "Creating VM", label: "Creating server" },
@@ -553,9 +626,11 @@ const PROVISION_STEPS = [
   { match: "Waiting for SSH", label: "Connecting to server" },
   { match: "Bootstrapping server", label: "Installing dependencies" },
   { match: "bootstrap complete", label: "Server ready" },
-  { match: "Writing OpenClaw", label: "Writing configuration" },
-  { match: "systemctl start", label: "Starting service" },
-  { match: "is listening", label: "Health check passed" },
+  { match: "Writing OpenClaw configuration", label: "Writing configuration" },
+  { match: "OpenClaw configuration written", label: "Configuration applied" },
+  { match: "Caddy reloaded", label: "Routing online" },
+  { match: "systemd service active", label: "Service running" },
+  { match: "Gateway port listening", label: "Health check passed" },
   { match: "Deployment complete", label: "Deployment complete" },
   // Shared-cluster path
   { match: "Selecting shared host", label: "Selecting host" },
@@ -588,33 +663,31 @@ function formatProvisioningElapsed(totalSeconds: number): string {
   return `${s}s`
 }
 
-/** Elapsed time driven by server clock (status poll); smooths with local 1s ticks between polls. */
-function useSmoothedProvisioningElapsed(active: boolean, serverSeconds: number | null) {
-  const [anchor, setAnchor] = useState<{ sec: number; at: number } | null>(null)
-
-  useEffect(() => {
-    if (!active || serverSeconds == null) {
-      setAnchor(null)
-      return
-    }
-    setAnchor({ sec: serverSeconds, at: Date.now() })
-  }, [active, serverSeconds])
-
+/**
+ * Elapsed time anchored to the instance's `createdAt` and ticked locally.
+ *
+ * Prior implementation re-anchored to the server's poll value every 2s, which
+ * could snap backward on poll latency / clock skew and looked like the timer
+ * "reset" at each provisioning step. Anchoring once to `createdAt` makes the
+ * displayed elapsed strictly monotonic from the moment the instance was
+ * created until provisioning completes, regardless of how many stages run.
+ */
+function useSmoothedProvisioningElapsed(active: boolean, createdAt: string) {
   const [label, setLabel] = useState("")
   useEffect(() => {
-    if (!active || !anchor) {
+    if (!active) {
       setLabel("")
       return
     }
+    const start = new Date(createdAt).getTime()
     const tick = () => {
-      const t = anchor.sec + Math.floor((Date.now() - anchor.at) / 1000)
+      const t = Math.max(0, Math.floor((Date.now() - start) / 1000))
       setLabel(formatProvisioningElapsed(t))
     }
     tick()
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
-  }, [active, anchor])
-
+  }, [active, createdAt])
   return label
 }
 
@@ -624,7 +697,7 @@ function ProvisioningCard({ instance, logs }: { instance: InstanceLite; logs: Lo
   const isRunning = instance.status === "running"
   const isActive = !isFailed && !isRunning
 
-  const elapsed = useSmoothedProvisioningElapsed(isActive, instance.provisioningElapsedSec)
+  const elapsed = useSmoothedProvisioningElapsed(isActive, instance.createdAt)
 
   const stageHint =
     isActive &&
@@ -721,6 +794,9 @@ function OverviewTab({ instance, logs }: { instance: InstanceLite; logs: LogLite
       {instance.hasRootPassword && instance.status === "running" && (
         <ServerAccessCard instanceId={instance.id} ipAddress={instance.ipAddress} />
       )}
+      {instance.hasGatewayToken && instance.deploymentTarget === "vps" && (
+        <GatewayTokenCard instanceId={instance.id} />
+      )}
 
       <Card title="Deployment">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -811,26 +887,19 @@ function ControlsTab({ instance }: { instance: InstanceLite }) {
   async function revealToken() {
     setTokenLoading(true)
     try {
-      const endpoint = isVps
-        ? `/api/instances/${instance.id}/gateway-token`
-        : `/api/instances/${instance.id}/token`
-      const r = await fetch(endpoint, { method: "GET" })
+      const r = await fetch(`/api/instances/${instance.id}/token`, { method: "GET" })
       const j = await r.json()
       if (!r.ok) {
         flash(j.error || "Failed to reveal token")
         return
       }
-      setTokenRevealed(isVps ? j.gatewayToken : j.botToken ?? "(not yet assigned)")
+      setTokenRevealed(j.botToken ?? "(not yet assigned)")
     } finally {
       setTokenLoading(false)
     }
   }
 
   async function rotateToken() {
-    if (isVps) {
-      flash("Gateway token rotation is not supported yet.")
-      return
-    }
     setTokenLoading(true)
     try {
       const r = await fetch(`/api/instances/${instance.id}/token`, { method: "POST" })
@@ -881,24 +950,22 @@ function ControlsTab({ instance }: { instance: InstanceLite }) {
           </button>
         </div>
       </Card>
-      <Card title={isVps ? "Gateway Token" : "Bot Token"}>
-        <p className="text-xs text-[var(--text-secondary)] mb-2">
-          {isVps
-            ? "Use this token to authenticate with the OpenClaw Control UI and API."
-            : "API token for programmatic access to this bot."}
-        </p>
-        <p className="font-mono text-sm text-[var(--text-primary)] break-all bg-[var(--code-bg)] border border-[var(--border-color)] p-3">
-          {tokenRevealed ?? (isVps ? "gw_•••••••••••••••••••••" : `sk_bot_•••••••••••••••••••••••••${instance.id.slice(-6)}`)}
-        </p>
-        <div className="flex gap-2 mt-3">
-          <button
-            onClick={revealToken}
-            disabled={tokenLoading}
-            className="px-3 py-1.5 text-xs uppercase tracking-[0.08em] bg-[var(--card-bg)] text-[var(--text-primary)] border border-[var(--border-color)] hover:border-[var(--accent-color)] font-mono disabled:opacity-50"
-          >
-            {tokenLoading ? "…" : "Reveal"}
-          </button>
-          {!isVps && (
+      {!isVps && (
+        <Card title="Bot Token">
+          <p className="text-xs text-[var(--text-secondary)] mb-2">
+            API token for programmatic access to this bot.
+          </p>
+          <p className="font-mono text-sm text-[var(--text-primary)] break-all bg-[var(--code-bg)] border border-[var(--border-color)] p-3">
+            {tokenRevealed ?? `sk_bot_•••••••••••••••••••••••••${instance.id.slice(-6)}`}
+          </p>
+          <div className="flex gap-2 mt-3">
+            <button
+              onClick={revealToken}
+              disabled={tokenLoading}
+              className="px-3 py-1.5 text-xs uppercase tracking-[0.08em] bg-[var(--card-bg)] text-[var(--text-primary)] border border-[var(--border-color)] hover:border-[var(--accent-color)] font-mono disabled:opacity-50"
+            >
+              {tokenLoading ? "…" : "Reveal"}
+            </button>
             <button
               onClick={rotateToken}
               disabled={tokenLoading}
@@ -906,17 +973,17 @@ function ControlsTab({ instance }: { instance: InstanceLite }) {
             >
               Rotate
             </button>
-          )}
-          {tokenRevealed && (
-            <button
-              onClick={copyToken}
-              className="px-3 py-1.5 text-xs uppercase tracking-[0.08em] bg-[var(--card-bg)] text-[var(--text-primary)] border border-[var(--border-color)] hover:border-[var(--accent-color)] font-mono"
-            >
-              Copy
-            </button>
-          )}
-        </div>
-      </Card>
+            {tokenRevealed && (
+              <button
+                onClick={copyToken}
+                className="px-3 py-1.5 text-xs uppercase tracking-[0.08em] bg-[var(--card-bg)] text-[var(--text-primary)] border border-[var(--border-color)] hover:border-[var(--accent-color)] font-mono"
+              >
+                Copy
+              </button>
+            )}
+          </div>
+        </Card>
+      )}
       {isVps && <DomainManageCard instance={instance} onFlash={flash} />}
       {toast && (
         <div className="md:col-span-2 px-4 py-2 text-xs font-mono text-[var(--text-primary)] bg-[var(--card-bg)] border border-[var(--accent-color)]/40">

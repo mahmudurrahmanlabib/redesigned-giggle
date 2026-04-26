@@ -166,6 +166,20 @@ export function renderCaddyfile(args: RenderCaddyfileArgs): string {
 ${port80}`
   }
 
+  // Cloudflare-proxied managed subdomains hit the origin on :443 by default
+  // (SSL mode "Full" / "Full strict"). Without a public cert on the origin we
+  // must still terminate TLS — `tls internal` makes Caddy generate a
+  // self-signed cert that Cloudflare accepts in "Full" mode. Without this,
+  // Caddy only listens on :80 and Cloudflare returns 521.
+  if (managed) {
+    return `${managed} {
+  tls internal
+  ${upstreamBlock}
+}
+
+${port80}`
+  }
+
   return port80
 }
 

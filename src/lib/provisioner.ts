@@ -39,6 +39,7 @@ import {
   renderSystemdUnit,
 } from "@/lib/openclaw"
 import { buildGatewayAllowedOrigins } from "@/lib/instance-gateway-access"
+import { PROVISION_EVENT } from "@/lib/provision-events"
 import { getVmProvider, describeVmError } from "@/lib/vm-provider"
 import { createAgentSubdomain, deleteAgentSubdomain } from "@/lib/agent-dns"
 import { generateMockIp } from "@/lib/instance"
@@ -80,13 +81,15 @@ function openclawCliArgs(...args: string[]): string {
   return args.map(bashSingleQuoteForScript).join(" ")
 }
 
-function buildVpsPostBootstrapBurstScript(opts: {
+/**
+ * Phase A — write `.env`, run onboard, run config-set commands.
+ * Bounded by `onboardTimeoutSec` (onboard) and `30s` per config call inside
+ * the script; the SSH wrapper applies an outer wall-clock too.
+ */
+function buildPhaseWriteConfig(opts: {
   envB64: string
-  caddyB64: string
-  unitB64: string
   skipOnboard: boolean
   onboardTimeoutSec: number
-  /** argv after `openclaw` binary, one `config set` per row */
   openclawConfigArgss: string[][]
 }): string {
   const skipFlag = opts.skipOnboard ? "1" : "0"
@@ -101,8 +104,6 @@ function buildVpsPostBootstrapBurstScript(opts: {
   return `#!/bin/bash
 set -uo pipefail
 OC_HOME=${bashSingleQuoteForScript(OPENCLAW_DIR)}
-SERVICE=${bashSingleQuoteForScript(OPENCLAW_SERVICE_NAME)}
-PORT=${bashSingleQuoteForScript(String(OPENCLAW_GATEWAY_PORT))}
 
 echo "=== provision: write_env ==="
 echo ${bashSingleQuoteForScript(opts.envB64)} | base64 -d > "\${OC_HOME}/.env" || exit 1
@@ -128,19 +129,41 @@ ${configLines}
 echo "=== provision: config_dump ==="
 cat "\${OC_HOME}/.openclaw/openclaw.json" 2>/dev/null || echo "no config file"
 
+echo "=== provision: write_config_done ==="
+`
+}
+
+/** Phase B — install Caddy config + systemd unit (no service start yet). */
+function buildPhaseInstallService(opts: { caddyB64: string; unitB64: string }): string {
+  return `#!/bin/bash
+set -euo pipefail
+SERVICE=${bashSingleQuoteForScript(OPENCLAW_SERVICE_NAME)}
+
 echo "=== provision: caddy ==="
 echo ${bashSingleQuoteForScript(opts.caddyB64)} | base64 -d > /etc/caddy/Caddyfile
-systemctl reload caddy || systemctl restart caddy
+timeout 30s bash -c 'systemctl reload caddy || systemctl restart caddy'
 
 echo "=== provision: systemd ==="
 echo ${bashSingleQuoteForScript(opts.unitB64)} | base64 -d > "/etc/systemd/system/\${SERVICE}.service"
-systemctl daemon-reload
-systemctl enable "\${SERVICE}"
-systemctl start "\${SERVICE}"
+timeout 20s systemctl daemon-reload
+timeout 20s systemctl enable "\${SERVICE}"
+
+echo "=== provision: install_service_done ==="
+`
+}
+
+/** Phase C — start the service and wait for it to become active. */
+function buildPhaseStartService(): string {
+  return `#!/bin/bash
+set -uo pipefail
+SERVICE=${bashSingleQuoteForScript(OPENCLAW_SERVICE_NAME)}
+
+echo "=== provision: start ==="
+timeout 30s systemctl start "\${SERVICE}" || true
 
 echo "=== provision: wait_active ==="
 ACTIVE_OK=0
-for _ in \$(seq 1 20); do
+for _ in \$(seq 1 30); do
   if systemctl is-active --quiet "\${SERVICE}"; then
     ACTIVE_OK=1
     break
@@ -153,9 +176,20 @@ if [ "\${ACTIVE_OK}" != "1" ]; then
   exit 1
 fi
 
+echo "=== provision: start_service_done ==="
+`
+}
+
+/** Phase D — wait for gateway port to bind. */
+function buildPhaseHealthCheck(): string {
+  return `#!/bin/bash
+set -uo pipefail
+SERVICE=${bashSingleQuoteForScript(OPENCLAW_SERVICE_NAME)}
+PORT=${bashSingleQuoteForScript(String(OPENCLAW_GATEWAY_PORT))}
+
 echo "=== provision: wait_port ==="
 PORT_OK=0
-for _ in \$(seq 1 60); do
+for _ in \$(seq 1 90); do
   if ss -tlnp 2>/dev/null | grep -q ":\${PORT}"; then
     PORT_OK=1
     break
@@ -624,7 +658,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     await logInstanceEvent({
       instanceId: instance.id,
       stage: currentStage,
-      message: "Writing OpenClaw configuration...",
+      message: PROVISION_EVENT.writingConfig,
     })
 
     const env = buildOpenclawEnv({
@@ -643,9 +677,9 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       await logInstanceEvent({
         instanceId: instance.id,
         stage: currentStage,
-        level: "warn",
+        level: "info",
         message:
-          "Managed hostname DNS is set but VM has no /etc/caddy/cf origin certificate. Use Cloudflare SSL → Flexible (HTTP to origin), or provision with CLOUDFLARE_ORIGIN_CERT_PEM and CLOUDFLARE_ORIGIN_CERT_KEY so Full (strict) works on port 443.",
+          "Managed hostname has no /etc/caddy/cf origin certificate; Caddy will use `tls internal` (self-signed). Cloudflare SSL must be \"Full\" (not \"Full (strict)\") for this to work. For \"Full (strict)\" provision with CLOUDFLARE_ORIGIN_CERT_PEM and CLOUDFLARE_ORIGIN_CERT_KEY.",
       })
     }
 
@@ -681,24 +715,26 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     ]
 
     const skipOnboard = shouldSkipOpenclawOnboard()
-    const burstScript = buildVpsPostBootstrapBurstScript({
+
+    /* Phase A — write env, onboard, apply OpenClaw config */
+    const onboardTimeoutSec = openclawOnboardTimeoutSec()
+    const phaseATimeoutMs = Math.max(120, onboardTimeoutSec + 120) * 1000
+    const phaseAScript = buildPhaseWriteConfig({
       envB64,
-      caddyB64,
-      unitB64,
       skipOnboard,
-      onboardTimeoutSec: openclawOnboardTimeoutSec(),
+      onboardTimeoutSec,
       openclawConfigArgss,
     })
-
-    const burstStep = await sshRunScriptLogged(
+    const phaseAStep = await sshRunScriptLogged(
       target,
-      burstScript,
+      phaseAScript,
       currentStage,
-      "provision:burst (env, onboard, config, caddy, systemd, health)",
+      "provision:phaseA (env, onboard, config)",
+      { timeoutMs: phaseATimeoutMs },
     )
-    await logSshStep(instance.id, burstStep)
+    await logSshStep(instance.id, phaseAStep)
 
-    const onboardExitLine = burstStep.stdout
+    const onboardExitLine = phaseAStep.stdout
       .split("\n")
       .find((line) => line.startsWith("onboard_exit:"))
     const onboardExit = onboardExitLine
@@ -714,18 +750,91 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       })
     }
 
-    if (burstStep.exitCode !== 0 && burstStep.exitCode !== null) {
+    if (phaseAStep.exitCode !== 0 && phaseAStep.exitCode !== null) {
       throw new Error(
-        `Provision burst failed (exit ${burstStep.exitCode}): ${burstStep.stderr || burstStep.stdout}`,
+        `Provision phase A failed (exit ${phaseAStep.exitCode}): ${phaseAStep.stderr || phaseAStep.stdout}`,
       )
     }
 
+    await logInstanceEvent({
+      instanceId: instance.id,
+      stage: currentStage,
+      action: "config_written",
+      result: "ok",
+      message: PROVISION_EVENT.configWritten,
+    })
+
+    /* Phase B — install Caddy + systemd unit */
     currentStage = "installing_service"
     await setProvisionStage(instance.id, currentStage)
+    const phaseBStep = await sshRunScriptLogged(
+      target,
+      buildPhaseInstallService({ caddyB64, unitB64 }),
+      currentStage,
+      "provision:phaseB (caddy, systemd)",
+      { timeoutMs: 90_000 },
+    )
+    await logSshStep(instance.id, phaseBStep)
+    if (phaseBStep.exitCode !== 0 && phaseBStep.exitCode !== null) {
+      throw new Error(
+        `Provision phase B failed (exit ${phaseBStep.exitCode}): ${phaseBStep.stderr || phaseBStep.stdout}`,
+      )
+    }
+    await logInstanceEvent({
+      instanceId: instance.id,
+      stage: currentStage,
+      action: "caddy_reloaded",
+      result: "ok",
+      message: PROVISION_EVENT.caddyReloaded,
+    })
+
+    /* Phase C — start the service and wait for active */
     currentStage = "starting_service"
     await setProvisionStage(instance.id, currentStage)
+    const phaseCStep = await sshRunScriptLogged(
+      target,
+      buildPhaseStartService(),
+      currentStage,
+      "provision:phaseC (systemctl start + wait_active)",
+      { timeoutMs: 90_000 },
+    )
+    await logSshStep(instance.id, phaseCStep)
+    if (phaseCStep.exitCode !== 0 && phaseCStep.exitCode !== null) {
+      throw new Error(
+        `Provision phase C failed (exit ${phaseCStep.exitCode}): ${phaseCStep.stderr || phaseCStep.stdout}`,
+      )
+    }
+    await logInstanceEvent({
+      instanceId: instance.id,
+      stage: currentStage,
+      action: "service_active",
+      result: "ok",
+      message: PROVISION_EVENT.serviceActive,
+    })
+
+    /* Phase D — health check (port listening) */
     currentStage = "health_check"
     await setProvisionStage(instance.id, currentStage)
+    const phaseDStep = await sshRunScriptLogged(
+      target,
+      buildPhaseHealthCheck(),
+      currentStage,
+      "provision:phaseD (wait_port)",
+      { timeoutMs: 150_000 },
+    )
+    await logSshStep(instance.id, phaseDStep)
+    if (phaseDStep.exitCode !== 0 && phaseDStep.exitCode !== null) {
+      throw new Error(
+        `Provision phase D failed (exit ${phaseDStep.exitCode}): ${phaseDStep.stderr || phaseDStep.stdout}`,
+      )
+    }
+    await logInstanceEvent({
+      instanceId: instance.id,
+      stage: currentStage,
+      action: "port_listening",
+      result: "ok",
+      message: PROVISION_EVENT.portListening,
+    })
 
     await logInstanceEvent({
       instanceId: instance.id,
@@ -927,7 +1036,7 @@ export type DeleteResult = { status: "deleted" | "pending"; vmId?: string }
 export async function deleteBot(instance: Instance): Promise<DeleteResult> {
   await transitionInstance(
     instance.id,
-    ["running", "stopped", "failed_provisioning", "provisioning", "failed"],
+    ["pending", "running", "stopped", "failed_provisioning", "provisioning", "failed"],
     "deleting",
     { bumpAttempts: "deletion" },
   )
