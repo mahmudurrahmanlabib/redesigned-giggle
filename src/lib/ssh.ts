@@ -170,8 +170,10 @@ echo "=== Bootstrap started at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 
 step() { CURRENT_STEP="$1"; echo "=== STEP: $1 ===" ; }
 
-step "apt_update"
 export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+
+step "apt_update"
 apt-get update -y
 apt-get upgrade -y
 
@@ -190,8 +192,19 @@ chown -R openclaw:openclaw /opt/openclaw
 mkdir -p /var/tmp/openclaw-compile-cache
 chown openclaw:openclaw /var/tmp/openclaw-compile-cache
 
+step "swap"
+# Small plans often OOM during global npm installs — add swap first.
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
 step "install_openclaw"
-SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install -g openclaw@${shellEscape(opts.openclawVersion)}
+export SHARP_IGNORE_GLOBAL_LIBVIPS=1
+npm install -g --no-audit --no-fund --loglevel=warn openclaw@${shellEscape(opts.openclawVersion)}
 openclaw --version
 
 step "install_caddy"
@@ -232,9 +245,11 @@ export async function sshBootstrapVps(
  * SSH connection errors during polling are swallowed — the script keeps
  * running server-side regardless.
  */
+const BOOTSTRAP_LOG_TAIL_CHARS = 14_000
+
 export async function sshPollBootstrap(
   target: SshTarget,
-  timeoutMs = 600_000,
+  timeoutMs = 900_000,
   pollMs = 10_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs
@@ -255,13 +270,13 @@ export async function sshPollBootstrap(
       const failedStep = status.slice(7)
       let logTail = ""
       try {
-        const logResult = await sshRun(target, `tail -200 ${BOOTSTRAP_LOG} 2>/dev/null || echo '(no log)'`)
+        const logResult = await sshRun(target, `tail -400 ${BOOTSTRAP_LOG} 2>/dev/null || echo '(no log)'`)
         logTail = logResult.stdout
       } catch {
         logTail = "(could not read bootstrap log)"
       }
       throw new Error(
-        `Bootstrap failed at step "${failedStep}". Log tail:\n${logTail.slice(0, 8000)}`
+        `Bootstrap failed at step "${failedStep}". Log tail:\n${logTail.slice(0, BOOTSTRAP_LOG_TAIL_CHARS)}`
       )
     }
     // status is "running" or "pending" — keep polling
@@ -270,13 +285,13 @@ export async function sshPollBootstrap(
   // Timeout — try to read log for diagnostics
   let logTail = ""
   try {
-    const logResult = await sshRun(target, `tail -100 ${BOOTSTRAP_LOG} 2>/dev/null || echo '(no log)'`)
+    const logResult = await sshRun(target, `tail -200 ${BOOTSTRAP_LOG} 2>/dev/null || echo '(no log)'`)
     logTail = logResult.stdout
   } catch {
     logTail = "(could not read bootstrap log)"
   }
   throw new Error(
-    `Bootstrap timed out after ${timeoutMs / 1000}s. Log tail:\n${logTail.slice(0, 8000)}`
+    `Bootstrap timed out after ${timeoutMs / 1000}s. Log tail:\n${logTail.slice(0, BOOTSTRAP_LOG_TAIL_CHARS)}`
   )
 }
 

@@ -328,6 +328,7 @@ async function collectDiagnostics(
 ): Promise<void> {
   const commands: [string, string][] = [
     [`journalctl -u ${OPENCLAW_SERVICE_NAME} --no-pager -n 200`, "journal"],
+    ["dmesg -T 2>/dev/null | tail -40 || true", "kernel_tail"],
     [`systemctl status ${OPENCLAW_SERVICE_NAME} --no-pager`, "service_status"],
     ["cat /opt/openclaw/.env 2>/dev/null | grep -v API_KEY | grep -v PASSWORD", "env_sanitized"],
     ["ls -la /opt/openclaw/", "workdir_listing"],
