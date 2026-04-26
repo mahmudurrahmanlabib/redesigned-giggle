@@ -107,6 +107,19 @@ pm2 restart redesigned-giggle       # or: sudo systemctl restart redesigned-gigg
 Point nginx / Cloudflare Tunnel at `127.0.0.1:3000`. Standard Next.js
 reverse-proxy setup — no special headers required beyond `X-Forwarded-*`.
 
+## 8. Cloudflare (managed agent hostnames / VPS edge)
+
+Provisioning can upsert **proxied DNS** for each instance via the Cloudflare API:
+
+- **`CLOUDFLARE_API_TOKEN`** and **`CLOUDFLARE_ZONE_ID`** — required for automatic `A` records on your zone (e.g. `*.example.com` or per-agent names). That gives you **DNS + TLS at the Cloudflare edge** (visitors hit HTTPS on Cloudflare first).
+
+**Origin connection** (Cloudflare → your Linode VM) is separate:
+
+- **Without** **`CLOUDFLARE_ORIGIN_CERT_PEM`** / **`CLOUDFLARE_ORIGIN_CERT_KEY`**: the VM may serve HTTP on port 80 only behind Caddy; use Cloudflare SSL mode **Flexible** (HTTPS to clients, HTTP to origin), or terminate TLS another way you control.
+- **With** origin cert + key in env: the bootstrap can install them on the VM and Caddy can serve **HTTPS on the managed hostname** toward the origin; you can use **Full (strict)** in Cloudflare.
+
+Pin **`OPENCLAW_VERSION`** in `.env` to a semver you have tested so VPS bootstrap does not pull breaking CLI changes from `latest`.
+
 ## Troubleshooting
 
 - **`[pm2 guard] Refusing to start: ... these files exist`** — you have

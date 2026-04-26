@@ -63,8 +63,8 @@ export function buildOpenclawEnv(args: {
  * with primary/fallbacks, and agent list entries with `id`.
  * OpenRouter API key is passed via env var (in .env), not in config.
  *
- * Gateway binds to localhost (Caddy on the same host proxies all external
- * traffic). trustedProxies is 127.0.0.1 so OpenClaw honours headers from
+ * Gateway uses bind mode `loopback` (Caddy on the same host proxies all external
+ * traffic to 127.0.0.1). trustedProxies is 127.0.0.1 so OpenClaw honours headers from
  * Caddy. Both auth.token and remote.token must match for token validation.
  */
 export function renderOpenclawConfig(args: {
@@ -91,7 +91,7 @@ export function renderOpenclawConfig(args: {
   return `{
   gateway: {
     port: ${OPENCLAW_GATEWAY_PORT},
-    bind: "localhost",
+    bind: "loopback",
     auth: {
       token: ${JSON.stringify(args.gatewayToken)},
     },

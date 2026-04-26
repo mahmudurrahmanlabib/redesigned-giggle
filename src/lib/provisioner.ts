@@ -107,7 +107,7 @@ if [ "${skipFlag}" = "1" ]; then
   echo "provision: onboard skipped (SKIP_OPENCLAW_ONBOARD=1 or OPENCLAW_ONBOARD=0)"
 else
   set +e
-  sudo -u openclaw HOME="\${OC_HOME}" /usr/bin/openclaw onboard --mode local --yes 2>&1
+  sudo -u openclaw HOME="\${OC_HOME}" /usr/bin/openclaw onboard --non-interactive --mode local --auth-choice skip --accept-risk --skip-health 2>&1
   ONBOARD_EC=$?
   set -e
 fi
@@ -659,8 +659,9 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     })
 
     const openclawConfigArgss: string[][] = [
+      ["config", "set", "gateway.mode", "local"],
       ["config", "set", "gateway.port", String(OPENCLAW_GATEWAY_PORT)],
-      ["config", "set", "gateway.bind", "localhost"],
+      ["config", "set", "gateway.bind", "loopback"],
       ["config", "set", "gateway.auth.token", JSON.stringify(gatewayToken)],
       ["config", "set", "gateway.remote.token", JSON.stringify(gatewayToken)],
       ["config", "set", "gateway.trustedProxies", '["127.0.0.1"]'],
