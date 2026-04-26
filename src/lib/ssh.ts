@@ -39,6 +39,31 @@ export async function sshRun(target: SshTarget, command: string): Promise<SshRun
   }
 }
 
+/**
+ * Run a multi-line bash script in a single SSH session (one connect/auth).
+ * Script is sent as base64 so quoting/special characters are safe.
+ */
+export async function sshRunScript(target: SshTarget, bashScript: string): Promise<SshRunResult> {
+  const b64 = Buffer.from(bashScript, "utf8").toString("base64")
+  const command = `echo '${b64}' | base64 -d | bash`
+  const ssh = await connect(target)
+  try {
+    const r = await ssh.execCommand(command)
+    return { stdout: r.stdout, stderr: r.stderr, code: r.code ?? null }
+  } finally {
+    ssh.dispose()
+  }
+}
+
+/** True if bootstrap installed Cloudflare origin cert/key (Full/strict to origin on :443). */
+export async function sshVmHasCloudflareOriginCerts(target: SshTarget): Promise<boolean> {
+  const r = await sshRun(
+    target,
+    "test -r /etc/caddy/cf/origin.pem -a -r /etc/caddy/cf/origin.key && echo 1 || echo 0",
+  )
+  return r.stdout.trim() === "1" && r.code === 0
+}
+
 export type SshStepResult = {
   stage: string
   command: string
@@ -63,6 +88,26 @@ export async function sshRunLogged(
   return {
     stage,
     command,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exitCode: result.code,
+    durationMs: Date.now() - start,
+    timestamp: new Date().toISOString(),
+  }
+}
+
+/** Like `sshRunLogged` but runs a full bash script in one session via `sshRunScript`. */
+export async function sshRunScriptLogged(
+  target: SshTarget,
+  bashScript: string,
+  stage: string,
+  commandSummary: string,
+): Promise<SshStepResult> {
+  const start = Date.now()
+  const result = await sshRunScript(target, bashScript)
+  return {
+    stage,
+    command: commandSummary,
     stdout: result.stdout,
     stderr: result.stderr,
     exitCode: result.code,
@@ -189,7 +234,7 @@ install_openclaw_pkg() {
     if [ "$a" -eq $((max - 1)) ]; then
       npm cache clean --force 2>/dev/null || true
     fi
-    sleep $(( a * 15 ))
+    sleep $((5 * a))
     a=$((a + 1))
   done
   return 1
@@ -200,14 +245,19 @@ export NEEDRESTART_MODE=a
 
 step "apt_update"
 apt-get $APT_OPTS update -y
-apt-get $APT_OPTS upgrade -y
 
 step "build_deps"
-apt-get $APT_OPTS install -y ca-certificates curl gnupg ufw git build-essential python3
+apt-get $APT_OPTS install -y ca-certificates curl gnupg ufw git build-essential python3 debian-keyring debian-archive-keyring apt-transport-https
+
+step "caddy_repo"
+curl --retry 5 --retry-delay 3 -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl --retry 5 --retry-delay 3 -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
 
 step "nodejs_repo"
 curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors https://deb.nodesource.com/setup_22.x | bash -
-apt-get $APT_OPTS install -y nodejs
+
+step "install_nodejs_caddy"
+apt-get $APT_OPTS install -y nodejs caddy
 node -v && npm -v
 
 step "verify_node"
@@ -260,12 +310,7 @@ install_openclaw_pkg
 step "verify_openclaw_cli"
 openclaw --version
 
-step "install_caddy"
-apt-get $APT_OPTS install -y debian-keyring debian-archive-keyring apt-transport-https
-curl --retry 5 --retry-delay 3 -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-curl --retry 5 --retry-delay 3 -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
-apt-get $APT_OPTS update -y
-apt-get $APT_OPTS install -y caddy
+step "caddy_cf_snippets"
 ${cfBlock}
 step "firewall"
 ufw allow 22/tcp || true
@@ -305,7 +350,7 @@ export async function sshPollBootstrap(
   target: SshTarget,
   /** Allow npm retries + slow mirrors (see bootstrap install_openclaw_pkg). */
   timeoutMs = 1_200_000,
-  pollMs = 10_000,
+  pollMs = 5_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -386,7 +431,7 @@ export async function sshSystemctlStatus(target: SshTarget, service: string): Pr
 export async function sshInstallCaddyfile(target: SshTarget, content: string): Promise<SshRunResult> {
   const writeResult = await sshWriteFile(target, "/etc/caddy/Caddyfile", content)
   if (writeResult.code !== 0 && writeResult.code !== null) return writeResult
-  return sshRun(target, "systemctl reload caddy")
+  return sshRun(target, "systemctl reload caddy || systemctl restart caddy")
 }
 
 /* ------------------------------------------------------------------ */

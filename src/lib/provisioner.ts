@@ -15,6 +15,9 @@ import {
   sshDockerStop,
   sshRun,
   sshRunLogged,
+  sshRunScriptLogged,
+  sshVmHasCloudflareOriginCerts,
+  type SshStepResult,
   sshSystemctlRestart,
   sshSystemctlStart,
   sshSystemctlStop,
@@ -26,7 +29,6 @@ import {
   buildOpenclawEnv,
   generateAdminPassword,
   generateGatewayToken,
-  hasCloudflareOriginCertEnv,
   OPENCLAW_GATEWAY_PORT,
   OPENCLAW_SERVICE_NAME,
   OPENCLAW_VERSION,
@@ -57,6 +59,109 @@ const FALLBACK_REGION = "us-east"
 const FALLBACK_PLAN = "g6-standard-2"
 
 const OPENCLAW_DIR = "/opt/openclaw"
+
+function shouldSkipOpenclawOnboard(): boolean {
+  return (
+    process.env.SKIP_OPENCLAW_ONBOARD === "1" || process.env.OPENCLAW_ONBOARD === "0"
+  )
+}
+
+function bashSingleQuoteForScript(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`
+}
+
+function openclawCliArgs(...args: string[]): string {
+  return args.map(bashSingleQuoteForScript).join(" ")
+}
+
+function buildVpsPostBootstrapBurstScript(opts: {
+  envB64: string
+  caddyB64: string
+  unitB64: string
+  skipOnboard: boolean
+  /** argv after `openclaw` binary, one `config set` per row */
+  openclawConfigArgss: string[][]
+}): string {
+  const skipFlag = opts.skipOnboard ? "1" : "0"
+  const configLines = opts.openclawConfigArgss
+    .map(
+      (argv) =>
+        `sudo -u openclaw HOME=${bashSingleQuoteForScript(OPENCLAW_DIR)} /usr/bin/openclaw ${openclawCliArgs(...argv)} 2>&1 || exit 1`,
+    )
+    .join("\n")
+
+  return `#!/bin/bash
+set -uo pipefail
+OC_HOME=${bashSingleQuoteForScript(OPENCLAW_DIR)}
+SERVICE=${bashSingleQuoteForScript(OPENCLAW_SERVICE_NAME)}
+PORT=${bashSingleQuoteForScript(String(OPENCLAW_GATEWAY_PORT))}
+
+echo "=== provision: write_env ==="
+echo ${bashSingleQuoteForScript(opts.envB64)} | base64 -d > "\${OC_HOME}/.env" || exit 1
+chmod 600 "\${OC_HOME}/.env"
+chown openclaw:openclaw "\${OC_HOME}/.env"
+
+echo "=== provision: onboard ==="
+ONBOARD_EC=0
+if [ "${skipFlag}" = "1" ]; then
+  echo "provision: onboard skipped (SKIP_OPENCLAW_ONBOARD=1 or OPENCLAW_ONBOARD=0)"
+else
+  set +e
+  sudo -u openclaw HOME="\${OC_HOME}" /usr/bin/openclaw onboard --mode local --yes 2>&1
+  ONBOARD_EC=$?
+  set -e
+fi
+echo "onboard_exit:\${ONBOARD_EC}"
+
+set -e
+echo "=== provision: config ==="
+${configLines}
+
+echo "=== provision: config_dump ==="
+cat "\${OC_HOME}/.openclaw/openclaw.json" 2>/dev/null || echo "no config file"
+
+echo "=== provision: caddy ==="
+echo ${bashSingleQuoteForScript(opts.caddyB64)} | base64 -d > /etc/caddy/Caddyfile
+systemctl reload caddy || systemctl restart caddy
+
+echo "=== provision: systemd ==="
+echo ${bashSingleQuoteForScript(opts.unitB64)} | base64 -d > "/etc/systemd/system/\${SERVICE}.service"
+systemctl daemon-reload
+systemctl enable "\${SERVICE}"
+systemctl start "\${SERVICE}"
+
+echo "=== provision: wait_active ==="
+ACTIVE_OK=0
+for _ in \$(seq 1 20); do
+  if systemctl is-active --quiet "\${SERVICE}"; then
+    ACTIVE_OK=1
+    break
+  fi
+  sleep 1
+done
+if [ "\${ACTIVE_OK}" != "1" ]; then
+  systemctl is-active "\${SERVICE}" || true
+  journalctl -u "\${SERVICE}" --no-pager -n 40
+  exit 1
+fi
+
+echo "=== provision: wait_port ==="
+PORT_OK=0
+for _ in \$(seq 1 60); do
+  if ss -tlnp 2>/dev/null | grep -q ":\${PORT}"; then
+    PORT_OK=1
+    break
+  fi
+  sleep 1
+done
+if [ "\${PORT_OK}" != "1" ]; then
+  journalctl -u "\${SERVICE}" --no-pager -n 50
+  exit 1
+fi
+
+echo "=== provision: done ==="
+`
+}
 
 /* ------------------------------------------------------------------ */
 /* helpers                                                             */
@@ -301,10 +406,7 @@ async function setProvisionStage(instanceId: string, stage: VpsStage): Promise<v
   })
 }
 
-async function logSshStep(
-  instanceId: string,
-  step: Awaited<ReturnType<typeof sshRunLogged>>,
-): Promise<void> {
+async function logSshStep(instanceId: string, step: SshStepResult): Promise<void> {
   const ok = step.exitCode === 0 || step.exitCode === null
   await logInstanceEvent({
     instanceId,
@@ -526,34 +628,29 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
 
     const envContent = renderEnvFile(env)
     const envB64 = Buffer.from(envContent, "utf8").toString("base64")
-    const envStep = await sshRunLogged(
-      target,
-      `echo '${envB64}' | base64 -d > '${OPENCLAW_DIR}/.env' && chmod 600 '${OPENCLAW_DIR}/.env' && chown openclaw:openclaw '${OPENCLAW_DIR}/.env'`,
-      currentStage,
-    )
-    await logSshStep(instance.id, envStep)
-    if (envStep.exitCode !== 0 && envStep.exitCode !== null) {
-      throw new Error(`Failed to write .env: ${envStep.stderr}`)
-    }
 
-    /* --- 7. OpenClaw onboard ---------------------------------------- */
-    const onboardStep = await sshRunLogged(
-      target,
-      `sudo -u openclaw HOME=${OPENCLAW_DIR} /usr/bin/openclaw onboard --mode local --yes 2>&1`,
-      currentStage,
-    )
-    await logSshStep(instance.id, onboardStep)
-    if (onboardStep.exitCode !== 0 && onboardStep.exitCode !== null) {
+    const useCfOriginTls =
+      Boolean(managedSubdomainForProvision) && (await sshVmHasCloudflareOriginCerts(target))
+    if (managedSubdomainForProvision && !useCfOriginTls) {
       await logInstanceEvent({
         instanceId: instance.id,
-        level: "warn",
         stage: currentStage,
-        action: "onboard_failed",
-        message: `openclaw onboard failed (exit ${onboardStep.exitCode}), continuing with config set...`,
+        level: "warn",
+        message:
+          "Managed hostname DNS is set but VM has no /etc/caddy/cf origin certificate. Use Cloudflare SSL → Flexible (HTTP to origin), or provision with CLOUDFLARE_ORIGIN_CERT_PEM and CLOUDFLARE_ORIGIN_CERT_KEY so Full (strict) works on port 443.",
       })
     }
 
-    /* --- 8. Overlay settings via openclaw config set ----------------- */
+    const caddyContent = renderCaddyfile({
+      domain: instance.domain,
+      managedSubdomain: managedSubdomainForProvision,
+      useCfOriginTls,
+    })
+    const caddyB64 = Buffer.from(caddyContent, "utf8").toString("base64")
+
+    const unitContent = renderSystemdUnit()
+    const unitB64 = Buffer.from(unitContent, "utf8").toString("base64")
+
     const allowedOrigins = buildGatewayAllowedOrigins({
       domain: instance.domain,
       managedSubdomain: managedSubdomainForProvision,
@@ -561,145 +658,64 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       tlsStatus: instance.domain ? instance.tlsStatus : null,
     })
 
-    const configCmds = [
-      `openclaw config set gateway.port ${OPENCLAW_GATEWAY_PORT}`,
-      `openclaw config set gateway.bind localhost`,
-      `openclaw config set gateway.auth.token ${JSON.stringify(gatewayToken)}`,
-      `openclaw config set gateway.remote.token ${JSON.stringify(gatewayToken)}`,
-      `openclaw config set gateway.trustedProxies '["127.0.0.1"]'`,
-      `openclaw config set gateway.controlUi.allowedOrigins '${JSON.stringify(allowedOrigins)}'`,
-      `openclaw config set gateway.controlUi.allowInsecureAuth true`,
-      `openclaw config set gateway.controlUi.dangerouslyDisableDeviceAuth true`,
-      `openclaw config set agents.defaults.model.primary ${JSON.stringify(route.model)}`,
-      `openclaw config set agents.defaults.model.fallbacks '${JSON.stringify([route.fallback])}'`,
+    const openclawConfigArgss: string[][] = [
+      ["config", "set", "gateway.port", String(OPENCLAW_GATEWAY_PORT)],
+      ["config", "set", "gateway.bind", "localhost"],
+      ["config", "set", "gateway.auth.token", JSON.stringify(gatewayToken)],
+      ["config", "set", "gateway.remote.token", JSON.stringify(gatewayToken)],
+      ["config", "set", "gateway.trustedProxies", '["127.0.0.1"]'],
+      ["config", "set", "gateway.controlUi.allowedOrigins", JSON.stringify(allowedOrigins)],
+      ["config", "set", "gateway.controlUi.allowInsecureAuth", "true"],
+      ["config", "set", "gateway.controlUi.dangerouslyDisableDeviceAuth", "true"],
+      ["config", "set", "agents.defaults.model.primary", JSON.stringify(route.model)],
+      ["config", "set", "agents.defaults.model.fallbacks", JSON.stringify([route.fallback])],
     ]
-    for (const cmd of configCmds) {
-      const step = await sshRunLogged(
-        target,
-        `sudo -u openclaw HOME=${OPENCLAW_DIR} /usr/bin/${cmd} 2>&1`,
-        currentStage,
-      )
-      await logSshStep(instance.id, step)
-    }
 
-    const doctorStep = await sshRunLogged(
-      target,
-      `sudo -u openclaw HOME=${OPENCLAW_DIR} /usr/bin/openclaw doctor 2>&1 || true`,
-      currentStage,
-    )
-    await logSshStep(instance.id, doctorStep)
-
-    const configDump = await sshRunLogged(
-      target,
-      `cat ${OPENCLAW_DIR}/.openclaw/openclaw.json 2>/dev/null || echo 'no config file'`,
-      currentStage,
-    )
-    await logSshStep(instance.id, configDump)
-
-    const caddyContent = renderCaddyfile({
-      domain: instance.domain,
-      managedSubdomain: managedSubdomainForProvision,
-      useCfOriginTls: hasCloudflareOriginCertEnv(),
+    const skipOnboard = shouldSkipOpenclawOnboard()
+    const burstScript = buildVpsPostBootstrapBurstScript({
+      envB64,
+      caddyB64,
+      unitB64,
+      skipOnboard,
+      openclawConfigArgss,
     })
-    const caddyB64 = Buffer.from(caddyContent, "utf8").toString("base64")
-    const caddyStep = await sshRunLogged(
+
+    const burstStep = await sshRunScriptLogged(
       target,
-      `echo '${caddyB64}' | base64 -d > /etc/caddy/Caddyfile && systemctl reload caddy`,
+      burstScript,
       currentStage,
+      "provision:burst (env, onboard, config, caddy, systemd, health)",
     )
-    await logSshStep(instance.id, caddyStep)
-    if (caddyStep.exitCode !== 0 && caddyStep.exitCode !== null) {
+    await logSshStep(instance.id, burstStep)
+
+    const onboardExitLine = burstStep.stdout
+      .split("\n")
+      .find((line) => line.startsWith("onboard_exit:"))
+    const onboardExit = onboardExitLine
+      ? parseInt(onboardExitLine.slice("onboard_exit:".length), 10)
+      : 0
+    if (!skipOnboard && Number.isFinite(onboardExit) && onboardExit !== 0) {
+      await logInstanceEvent({
+        instanceId: instance.id,
+        level: "warn",
+        stage: currentStage,
+        action: "onboard_failed",
+        message: `openclaw onboard failed (exit ${onboardExit}), continued with config set...`,
+      })
+    }
+
+    if (burstStep.exitCode !== 0 && burstStep.exitCode !== null) {
       throw new Error(
-        `Caddy reload failed (exit ${caddyStep.exitCode}): ${caddyStep.stderr || caddyStep.stdout}`,
+        `Provision burst failed (exit ${burstStep.exitCode}): ${burstStep.stderr || burstStep.stdout}`,
       )
     }
 
-    /* --- 9. Systemd install ----------------------------------------- */
     currentStage = "installing_service"
     await setProvisionStage(instance.id, currentStage)
-
-    const unitContent = renderSystemdUnit()
-    const unitB64 = Buffer.from(unitContent, "utf8").toString("base64")
-    const unitStep = await sshRunLogged(
-      target,
-      `echo '${unitB64}' | base64 -d > '/etc/systemd/system/${OPENCLAW_SERVICE_NAME}.service'`,
-      currentStage,
-    )
-    await logSshStep(instance.id, unitStep)
-    if (unitStep.exitCode !== 0 && unitStep.exitCode !== null) {
-      throw new Error(`Failed to write systemd unit: ${unitStep.stderr}`)
-    }
-
-    const reloadStep = await sshRunLogged(target, "systemctl daemon-reload", currentStage)
-    await logSshStep(instance.id, reloadStep)
-
-    const enableStep = await sshRunLogged(
-      target,
-      `systemctl enable ${OPENCLAW_SERVICE_NAME}`,
-      currentStage,
-    )
-    await logSshStep(instance.id, enableStep)
-
-    /* --- 10. Start service ------------------------------------------ */
     currentStage = "starting_service"
     await setProvisionStage(instance.id, currentStage)
-
-    const startStep = await sshRunLogged(
-      target,
-      `systemctl start ${OPENCLAW_SERVICE_NAME}`,
-      currentStage,
-    )
-    await logSshStep(instance.id, startStep)
-
-    await new Promise((r) => setTimeout(r, 8_000))
-    const stableCheck = await sshRunLogged(
-      target,
-      `systemctl is-active ${OPENCLAW_SERVICE_NAME}`,
-      currentStage,
-    )
-    await logSshStep(instance.id, stableCheck)
-    if (stableCheck.stdout.trim() !== "active") {
-      const journalSnap = await sshRunLogged(
-        target,
-        `journalctl -u ${OPENCLAW_SERVICE_NAME} --no-pager -n 40`,
-        currentStage,
-      )
-      await logSshStep(instance.id, journalSnap)
-      throw new Error(
-        `${OPENCLAW_SERVICE_NAME} not stable after 8s (status: ${stableCheck.stdout.trim()})`,
-      )
-    }
-
-    /* --- 11. Health check ------------------------------------------- */
     currentStage = "health_check"
     await setProvisionStage(instance.id, currentStage)
-
-    const portDeadline = Date.now() + 60_000
-    let portOpen = false
-    while (Date.now() < portDeadline) {
-      await new Promise((r) => setTimeout(r, 3_000))
-      const portStep = await sshRunLogged(
-        target,
-        `ss -tlnp | grep ':${OPENCLAW_GATEWAY_PORT}' || true`,
-        currentStage,
-      )
-      await logSshStep(instance.id, portStep)
-      if (portStep.stdout.includes(`:${OPENCLAW_GATEWAY_PORT}`)) {
-        portOpen = true
-        break
-      }
-    }
-    if (!portOpen) {
-      const journalSnap = await sshRunLogged(
-        target,
-        `journalctl -u ${OPENCLAW_SERVICE_NAME} --no-pager -n 50`,
-        currentStage,
-      )
-      await logSshStep(instance.id, journalSnap)
-      throw new Error(
-        `Port ${OPENCLAW_GATEWAY_PORT} never opened after 60s. Service may be crash-looping.`,
-      )
-    }
 
     await logInstanceEvent({
       instanceId: instance.id,

@@ -137,11 +137,6 @@ export type RenderCaddyfileArgs = {
   useCfOriginTls?: boolean
 }
 
-/** Matches VPS bootstrap when origin cert/key are installed under /etc/caddy/cf/. */
-export function hasCloudflareOriginCertEnv(): boolean {
-  return Boolean(process.env.CLOUDFLARE_ORIGIN_CERT_PEM && process.env.CLOUDFLARE_ORIGIN_CERT_KEY)
-}
-
 export function renderCaddyfile(args: RenderCaddyfileArgs): string {
   const upstreamBlock = `reverse_proxy localhost:${OPENCLAW_GATEWAY_PORT} {
     header_up Host {host}

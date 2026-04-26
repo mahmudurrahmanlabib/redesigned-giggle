@@ -2,12 +2,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/auth"
 import { db, instances, eq } from "@/db"
 import { whereUserInstanceVisible } from "@/lib/instance-queries"
-import { sshInstallCaddyfile, sshRun } from "@/lib/ssh"
-import {
-  hasCloudflareOriginCertEnv,
-  OPENCLAW_SERVICE_NAME,
-  renderCaddyfile,
-} from "@/lib/openclaw"
+import { sshInstallCaddyfile, sshRun, sshVmHasCloudflareOriginCerts } from "@/lib/ssh"
+import { OPENCLAW_SERVICE_NAME, renderCaddyfile } from "@/lib/openclaw"
 import { buildGatewayAllowedOrigins } from "@/lib/instance-gateway-access"
 
 export async function POST(
@@ -47,10 +43,12 @@ export async function POST(
   const target = { host: instance.ipAddress }
 
   try {
+    const useCfOriginTls =
+      Boolean(instance.managedSubdomain) && (await sshVmHasCloudflareOriginCerts(target))
     const caddyContent = renderCaddyfile({
       domain,
       managedSubdomain: instance.managedSubdomain,
-      useCfOriginTls: hasCloudflareOriginCertEnv(),
+      useCfOriginTls,
     })
     const caddyResult = await sshInstallCaddyfile(target, caddyContent)
     if (caddyResult.code !== 0 && caddyResult.code !== null) {
