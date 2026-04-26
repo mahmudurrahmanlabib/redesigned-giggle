@@ -29,6 +29,7 @@ import {
   OPENCLAW_GATEWAY_PORT,
   OPENCLAW_SERVICE_NAME,
   OPENCLAW_VERSION,
+  OPENCLAW_VPS_MIN_NODE,
   renderCaddyfile,
   renderEnvFile,
   renderOpenclawConfig,
@@ -480,6 +481,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     })
     await sshBootstrapVps(target, {
       openclawVersion: OPENCLAW_VERSION(),
+      minNodeVersion: OPENCLAW_VPS_MIN_NODE,
       cfOriginCertPem: process.env.CLOUDFLARE_ORIGIN_CERT_PEM,
       cfOriginKeyPem: process.env.CLOUDFLARE_ORIGIN_CERT_KEY,
     })

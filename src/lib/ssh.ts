@@ -117,6 +117,8 @@ function shellEscape(value: string): string {
 
 export type BootstrapOpts = {
   openclawVersion: string
+  /** Semver minimum; must match OpenClaw CLI (see OPENCLAW_VPS_MIN_NODE). */
+  minNodeVersion: string
   cfOriginCertPem?: string
   cfOriginKeyPem?: string
 }
@@ -170,20 +172,70 @@ echo "=== Bootstrap started at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 
 step() { CURRENT_STEP="$1"; echo "=== STEP: $1 ===" ; }
 
+# P1 transient: mirror flakiness
+APT_OPTS="-o Acquire::Retries=3 -o Acquire::http::Timeout=120"
+OPENCLAW_PKG_SPEC=openclaw@${shellEscape(opts.openclawVersion)}
+
+install_openclaw_pkg() {
+  local max=3 a=1
+  while [ "$a" -le "$max" ]; do
+    echo "=== npm install attempt $a/$max ==="
+    if SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install -g --no-audit --no-fund --loglevel=warn --engine-strict "$OPENCLAW_PKG_SPEC"; then
+      return 0
+    fi
+    if [ "$a" -eq "$max" ]; then
+      return 1
+    fi
+    if [ "$a" -eq $((max - 1)) ]; then
+      npm cache clean --force 2>/dev/null || true
+    fi
+    sleep $(( a * 15 ))
+    a=$((a + 1))
+  done
+  return 1
+}
+
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
 step "apt_update"
-apt-get update -y
-apt-get upgrade -y
+apt-get $APT_OPTS update -y
+apt-get $APT_OPTS upgrade -y
 
 step "build_deps"
-apt-get install -y ca-certificates curl gnupg ufw git build-essential
+apt-get $APT_OPTS install -y ca-certificates curl gnupg ufw git build-essential python3
 
-step "node_setup"
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-apt-get install -y nodejs
+step "nodejs_repo"
+curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors https://deb.nodesource.com/setup_22.x | bash -
+apt-get $APT_OPTS install -y nodejs
 node -v && npm -v
+
+step "verify_node"
+export OPENCLAW_MIN_NODE=${shellEscape(opts.minNodeVersion)}
+node <<'VERIFYNODE'
+const min = process.env.OPENCLAW_MIN_NODE
+if (!min) {
+  console.error("OPENCLAW_MIN_NODE not set")
+  process.exit(1)
+}
+const cur = process.version.slice(1)
+const parts = (s) => s.split(".").map((x) => parseInt(x, 10) || 0)
+const a = parts(cur)
+const b = parts(min)
+const n = Math.max(a.length, b.length)
+for (let i = 0; i < n; i++) {
+  const ai = a[i] ?? 0
+  const bi = b[i] ?? 0
+  if (ai > bi) process.exit(0)
+  if (ai < bi) {
+    console.error(
+      "openclaw: Node.js " + min + "+ is required (current: v" + cur + ").",
+    )
+    process.exit(1)
+  }
+}
+process.exit(0)
+VERIFYNODE
 
 step "create_user"
 id openclaw >/dev/null 2>&1 || useradd --system --home-dir /opt/openclaw --shell /usr/sbin/nologin openclaw
@@ -193,7 +245,6 @@ mkdir -p /var/tmp/openclaw-compile-cache
 chown openclaw:openclaw /var/tmp/openclaw-compile-cache
 
 step "swap"
-# Small plans often OOM during global npm installs — add swap first.
 if [ ! -f /swapfile ]; then
   fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
   chmod 600 /swapfile
@@ -204,15 +255,17 @@ fi
 
 step "install_openclaw"
 export SHARP_IGNORE_GLOBAL_LIBVIPS=1
-npm install -g --no-audit --no-fund --loglevel=warn openclaw@${shellEscape(opts.openclawVersion)}
+install_openclaw_pkg
+
+step "verify_openclaw_cli"
 openclaw --version
 
 step "install_caddy"
-apt-get install -y debian-keyring debian-archive-keyring apt-transport-https
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
-apt-get update -y
-apt-get install -y caddy
+apt-get $APT_OPTS install -y debian-keyring debian-archive-keyring apt-transport-https
+curl --retry 5 --retry-delay 3 -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl --retry 5 --retry-delay 3 -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+apt-get $APT_OPTS update -y
+apt-get $APT_OPTS install -y caddy
 ${cfBlock}
 step "firewall"
 ufw allow 22/tcp || true
@@ -250,7 +303,8 @@ const BOOTSTRAP_LOG_TAIL_BYTES = 24_000
 
 export async function sshPollBootstrap(
   target: SshTarget,
-  timeoutMs = 900_000,
+  /** Allow npm retries + slow mirrors (see bootstrap install_openclaw_pkg). */
+  timeoutMs = 1_200_000,
   pollMs = 10_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs

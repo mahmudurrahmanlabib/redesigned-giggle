@@ -25,6 +25,9 @@ export function generateGatewayToken(length = 32): string {
 export const OPENCLAW_VERSION = () =>
   process.env.OPENCLAW_VERSION || "latest"
 
+/** Minimum Node on VPS; must satisfy OpenClaw CLI / package engines (bootstrap verifies). */
+export const OPENCLAW_VPS_MIN_NODE = "22.14.0"
+
 export const OPENCLAW_GATEWAY_PORT = 18789
 export const OPENCLAW_SERVICE_NAME = "openclaw-gateway"
 

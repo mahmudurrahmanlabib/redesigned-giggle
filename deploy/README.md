@@ -19,8 +19,8 @@ box. Don't create a second env file.
 ## 1. Prerequisites on the VPS
 
 ```bash
-# Node 20 (NodeSource)
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+# Node 22 (NodeSource; aligns with OpenClaw VPS bootstrap)
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs postgresql
 
 # pm2 for process management
