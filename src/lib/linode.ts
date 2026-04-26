@@ -6,6 +6,7 @@ import {
   setToken,
   createStackScript,
   getStackScripts,
+  updateStackScript,
 } from "@linode/api-v4"
 import type { Linode, CreateLinodeRequest } from "@linode/api-v4/lib/linodes"
 import { OPENCLAW_VERSION } from "@/lib/openclaw"
@@ -210,18 +211,27 @@ export async function linodeListAllVMs(
  */
 export async function ensureSharedHostStackScript(): Promise<number> {
   ensureToken()
+  const desired = buildStackScript()
   const existing = await getStackScripts(
     { page_size: 100 },
     { label: SHARED_HOST_STACKSCRIPT_LABEL, mine: true }
   )
   const match = existing.data.find((s) => s.label === SHARED_HOST_STACKSCRIPT_LABEL)
-  if (match) return match.id
+  if (match) {
+    if (match.script !== desired) {
+      await updateStackScript(match.id, {
+        script: desired,
+        rev_note: `auto-sync ${new Date().toISOString().slice(0, 10)}`,
+      })
+    }
+    return match.id
+  }
 
   const created = await createStackScript({
     label: SHARED_HOST_STACKSCRIPT_LABEL,
     description: "SovereignML VPS bootstrap — installs Node 20 LTS, OpenClaw (pinned), Caddy, and authorizes fleet SSH key.",
     images: ["linode/ubuntu24.04"],
-    script: buildStackScript(),
+    script: desired,
     is_public: false,
     rev_note: "initial",
   })
