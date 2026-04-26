@@ -4,12 +4,9 @@ import {
   getLinode,
   getLinodes,
   setToken,
-  createStackScript,
-  getStackScripts,
-  updateStackScript,
 } from "@linode/api-v4"
 import type { Linode, CreateLinodeRequest } from "@linode/api-v4/lib/linodes"
-import { OPENCLAW_VERSION } from "@/lib/openclaw"
+import type { VmProvider, CreateVmOpts, VmInfo } from "@/lib/vm-provider"
 
 let tokenInitialized = false
 function ensureToken() {
@@ -22,91 +19,26 @@ function ensureToken() {
   tokenInitialized = true
 }
 
-/**
- * StackScript run on first boot. Installs Node 20 LTS, OpenClaw (pinned npm),
- * and Caddy. No Docker anywhere. Every phase validated before continuing.
- */
-export function buildStackScript(): string {
-  const ver = OPENCLAW_VERSION()
-  return `#!/bin/bash
-# <UDF name="ssh_public_key" label="SSH public key to authorize for root" />
-# <UDF name="cf_origin_cert_b64" label="Base64 Cloudflare Origin Cert PEM (wildcard *.sovereignclaw.xyz)" default="" />
-# <UDF name="cf_origin_key_b64" label="Base64 Cloudflare Origin Cert private key" default="" />
-set -euxo pipefail
-
-export DEBIAN_FRONTEND=noninteractive
-
-# --- Phase 1: System bootstrap ---
-apt-get update -y && apt-get upgrade -y
-apt-get install -y ca-certificates curl gnupg ufw git build-essential
-
-# --- SSH key ---
-mkdir -p /root/.ssh
-chmod 700 /root/.ssh
-echo "$SSH_PUBLIC_KEY" >> /root/.ssh/authorized_keys
-chmod 600 /root/.ssh/authorized_keys
-
-# --- Phase 2: Node 20 LTS via NodeSource ---
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-apt-get install -y nodejs
-node -v && npm -v
-
-# --- Phase 3: Dedicated service user + working directory ---
-useradd --system --home-dir /opt/openclaw --shell /usr/sbin/nologin openclaw || true
-mkdir -p /opt/openclaw
-chown -R openclaw:openclaw /opt/openclaw
-mkdir -p /var/tmp/openclaw-compile-cache
-chown openclaw:openclaw /var/tmp/openclaw-compile-cache
-
-# --- Phase 4: Install OpenClaw (pinned) ---
-SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install -g openclaw@${ver}
-openclaw --version
-
-# --- Phase 8: Install Caddy ---
-apt-get install -y debian-keyring debian-archive-keyring apt-transport-https
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
-apt-get update -y
-apt-get install -y caddy
-
-# --- Phase 9: Cloudflare Origin Certificate (wildcard *.sovereignclaw.xyz) ---
-# Provisioned by the platform via StackScript UDFs. If empty, the per-agent
-# managed-subdomain vhost won't be served, but user-custom-domain LE keeps working.
-if [ -n "\${CF_ORIGIN_CERT_B64:-}" ] && [ -n "\${CF_ORIGIN_KEY_B64:-}" ]; then
-  install -d -m 0750 -o caddy -g caddy /etc/caddy/cf
-  echo "$CF_ORIGIN_CERT_B64" | base64 -d > /etc/caddy/cf/origin.pem
-  echo "$CF_ORIGIN_KEY_B64" | base64 -d > /etc/caddy/cf/origin.key
-  chown caddy:caddy /etc/caddy/cf/origin.pem /etc/caddy/cf/origin.key
-  chmod 0640 /etc/caddy/cf/origin.pem
-  chmod 0600 /etc/caddy/cf/origin.key
-
-  # Caddy snippet: any *.sovereignclaw.xyz hostname uses the wildcard origin cert.
-  # The render in domain/route.ts owns the user-custom-domain block and includes
-  # this file via "import /etc/caddy/snippets/sovereignclaw.caddy".
-  install -d -m 0755 /etc/caddy/snippets
-  cat > /etc/caddy/snippets/sovereignclaw.caddy <<'CFSNIP'
-*.sovereignclaw.xyz {
-  tls /etc/caddy/cf/origin.pem /etc/caddy/cf/origin.key
-  reverse_proxy 127.0.0.1:3000
-}
-CFSNIP
-fi
-
-# --- Firewall ---
-ufw allow 22/tcp || true
-ufw allow 80/tcp || true
-ufw allow 443/tcp || true
-yes | ufw enable || true
-`
+function linodeToVmInfo(vm: Linode): VmInfo {
+  return {
+    id: String(vm.id),
+    status: vm.status,
+    ipv4: vm.ipv4 ?? [],
+    label: vm.label ?? undefined,
+    tags: vm.tags ?? [],
+    created: vm.created ?? undefined,
+  }
 }
 
-export const SHARED_HOST_STACKSCRIPT_LABEL = "sovereignml-native-v1"
+function isLinodeNotFound(err: unknown): boolean {
+  const e = err as { response?: { status?: number } }
+  return e?.response?.status === 404
+}
 
 /**
  * Turn a Linode/axios error into a single readable line. Crucial for logs:
  * the raw AxiosError includes `config.headers.Authorization` (our bearer
- * token), which must never land in pm2 log files. Callers should use this
- * in place of `err.message` or the default console.error(err) dump.
+ * token), which must never land in pm2 log files.
  */
 export function describeLinodeError(err: unknown): string {
   const e = err as {
@@ -123,117 +55,71 @@ export function describeLinodeError(err: unknown): string {
   return e?.message ?? String(err)
 }
 
-export async function linodeCreateVM(
-  payload: Pick<CreateLinodeRequest, "label" | "type" | "region" | "root_pass"> & {
-    stackscript_id?: number
-    stackscript_data?: Record<string, string>
-    image?: string
-    authorized_keys?: string[]
-    tags?: string[]
+export class LinodeProvider implements VmProvider {
+  readonly name = "linode"
+
+  async createVM(opts: CreateVmOpts): Promise<VmInfo> {
+    ensureToken()
+    const payload: CreateLinodeRequest = {
+      label: opts.label,
+      type: opts.plan,
+      region: opts.region,
+      root_pass: opts.rootPassword,
+      image: opts.image ?? "linode/ubuntu24.04",
+      authorized_keys: opts.authorizedKeys,
+      tags: opts.tags,
+    } as CreateLinodeRequest
+    const vm = await createLinode(payload)
+    return linodeToVmInfo(vm)
   }
-): Promise<Linode> {
-  ensureToken()
-  return createLinode({
-    ...payload,
-    image: payload.image ?? "linode/ubuntu24.04",
-  } as CreateLinodeRequest)
-}
 
-/** Returns true if the VM was deleted, false if it did not exist (404). */
-export async function linodeDeleteVM(linodeId: number): Promise<boolean> {
-  ensureToken()
-  try {
-    await deleteLinode(linodeId)
-    return true
-  } catch (err) {
-    if (isLinodeNotFound(err)) return false
-    throw err
+  async deleteVM(id: string): Promise<boolean> {
+    ensureToken()
+    try {
+      await deleteLinode(Number(id))
+      return true
+    } catch (err) {
+      if (isLinodeNotFound(err)) return false
+      throw err
+    }
   }
-}
 
-export async function linodeGetVM(linodeId: number): Promise<Linode> {
-  ensureToken()
-  return getLinode(linodeId)
-}
-
-/** Returns null if the VM does not exist. */
-export async function linodeGetVMOrNull(linodeId: number): Promise<Linode | null> {
-  ensureToken()
-  try {
-    return await getLinode(linodeId)
-  } catch (err) {
-    if (isLinodeNotFound(err)) return null
-    throw err
+  async getVM(id: string): Promise<VmInfo> {
+    ensureToken()
+    const vm = await getLinode(Number(id))
+    return linodeToVmInfo(vm)
   }
-}
 
-export function isLinodeNotFound(err: unknown): boolean {
-  const e = err as { response?: { status?: number } }
-  return e?.response?.status === 404
-}
+  async getVMOrNull(id: string): Promise<VmInfo | null> {
+    ensureToken()
+    try {
+      const vm = await getLinode(Number(id))
+      return linodeToVmInfo(vm)
+    } catch (err) {
+      if (isLinodeNotFound(err)) return null
+      throw err
+    }
+  }
 
-/**
- * List every VM in the account, optionally filtered by tag. Paginated —
- * walks until `page * page_size >= results`.
- *
- * Used by the reconciler to detect orphans: VMs that exist in Linode but
- * have no matching DB row.
- */
-export async function linodeListAllVMs(
-  opts: { tag?: string } = {},
-): Promise<Linode[]> {
-  ensureToken()
-  const out: Linode[] = []
-  const pageSize = 100
-  let page = 1
-  // The Linode SDK accepts a filter param; +order/+order_by are also valid.
-  // We tag every VM we create with "sovereignml"; filter by it.
-  const filter: Record<string, unknown> = {}
-  if (opts.tag) filter["+order"] = "asc"
-  while (true) {
-    const resp = await getLinodes({ page, page_size: pageSize }, filter)
-    const data = resp.data ?? []
-    for (const vm of data) {
-      if (!opts.tag || (vm.tags ?? []).includes(opts.tag)) {
-        out.push(vm)
+  async listVMs(filter?: { tag?: string }): Promise<VmInfo[]> {
+    ensureToken()
+    const out: VmInfo[] = []
+    const pageSize = 100
+    let page = 1
+    const filterObj: Record<string, unknown> = {}
+    if (filter?.tag) filterObj["+order"] = "asc"
+    while (true) {
+      const resp = await getLinodes({ page, page_size: pageSize }, filterObj)
+      const data = resp.data ?? []
+      for (const vm of data) {
+        if (!filter?.tag || (vm.tags ?? []).includes(filter.tag)) {
+          out.push(linodeToVmInfo(vm))
+        }
       }
+      if (page * pageSize >= (resp.results ?? 0)) break
+      page++
+      if (page > 50) break
     }
-    if (page * pageSize >= (resp.results ?? 0)) break
-    page++
-    if (page > 50) break // safety: 5000 VMs is already absurd
+    return out
   }
-  return out
-}
-
-/**
- * Find-or-create the shared host StackScript in the user's Linode account.
- * Re-uses existing one by label so repeated bootstrap runs don't duplicate.
- */
-export async function ensureSharedHostStackScript(): Promise<number> {
-  ensureToken()
-  const desired = buildStackScript()
-  const existing = await getStackScripts(
-    { page_size: 100 },
-    { label: SHARED_HOST_STACKSCRIPT_LABEL, mine: true }
-  )
-  const match = existing.data.find((s) => s.label === SHARED_HOST_STACKSCRIPT_LABEL)
-  if (match) {
-    if (match.script !== desired) {
-      await updateStackScript(match.id, {
-        script: desired,
-        rev_note: `auto-sync ${new Date().toISOString().slice(0, 10)}`,
-      })
-    }
-    return match.id
-  }
-
-  const created = await createStackScript({
-    label: SHARED_HOST_STACKSCRIPT_LABEL,
-    description: "SovereignML VPS bootstrap — installs Node 20 LTS, OpenClaw (pinned), Caddy, and authorizes fleet SSH key.",
-    images: ["linode/ubuntu24.04"],
-    script: desired,
-    is_public: false,
-    rev_note: "initial",
-  })
-  return created.id
 }

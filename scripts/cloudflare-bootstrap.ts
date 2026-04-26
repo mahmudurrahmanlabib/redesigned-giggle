@@ -14,8 +14,8 @@
  * The Origin Cert + key are issued via Cloudflare dashboard (SSL/TLS → Origin
  * Server → Create Certificate, Hostnames: *.sovereignclaw.xyz, sovereignclaw.xyz,
  * 15-year validity). Base64-encode and put in CLOUDFLARE_ORIGIN_CERT_PEM /
- * CLOUDFLARE_ORIGIN_CERT_KEY in your secret store. The provisioner threads
- * them into the StackScript UDFs at VM creation time.
+ * CLOUDFLARE_ORIGIN_CERT_KEY in your secret store. The SSH bootstrap writes
+ * them to /etc/caddy/cf/ on each VM during provisioning.
  */
 import { patchZoneSetting, upsertDnsRecord } from "@/lib/cloudflare"
 

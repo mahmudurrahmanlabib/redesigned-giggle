@@ -41,7 +41,7 @@ async function main() {
         flag: region.flag,
         available: region.available,
         sortOrder: region.sortOrder,
-        linodeRegion: region.linodeRegion,
+        providerRegion: region.providerRegion,
       })
       .onConflictDoUpdate({
         target: regions.slug,
@@ -51,7 +51,7 @@ async function main() {
           flag: region.flag,
           available: region.available,
           sortOrder: region.sortOrder,
-          linodeRegion: region.linodeRegion,
+          providerRegion: region.providerRegion,
         },
       })
   }
@@ -78,7 +78,7 @@ async function main() {
         priceYearly: config.priceYearly,
         sortOrder: config.sortOrder,
         isActive: config.isActive,
-        linodePlan: config.linodePlan,
+        providerPlan: config.providerPlan,
       })
       .onConflictDoUpdate({
         target: serverConfigs.slug,
@@ -92,7 +92,7 @@ async function main() {
           priceYearly: config.priceYearly,
           sortOrder: config.sortOrder,
           isActive: config.isActive,
-          linodePlan: config.linodePlan,
+          providerPlan: config.providerPlan,
         },
       })
   }

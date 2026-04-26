@@ -112,9 +112,9 @@ export default async function AdminInstancesPage({
                     <Badge className={STATUS_STYLES[instance.status] || STATUS_STYLES.stopped}>
                       {instance.status}
                     </Badge>
-                    {instance.linodeId && (
+                    {instance.vmId && (
                       <span className="text-[10px] font-mono text-zinc-500">
-                        linode#{instance.linodeId}
+                        vm#{instance.vmId}
                       </span>
                     )}
                   </div>
@@ -174,7 +174,7 @@ export default async function AdminInstancesPage({
               className="bg-white/5 border border-white/10 rounded p-3 text-sm flex items-center justify-between gap-4"
             >
               <div className="min-w-0">
-                <p className="text-white font-mono">linode#{o.linodeId}</p>
+                <p className="text-white font-mono">vm#{o.vmId}</p>
                 <p className="text-zinc-500 text-xs truncate">{o.detail ?? ""}</p>
               </div>
               <div className="text-right shrink-0">

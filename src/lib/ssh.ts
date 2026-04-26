@@ -1,5 +1,4 @@
 import { NodeSSH } from "node-ssh"
-import { OPENCLAW_VERSION } from "@/lib/openclaw"
 
 export type SshTarget = {
   host: string
@@ -71,7 +70,7 @@ export async function sshRunLogged(
 }
 
 /**
- * Poll until sshd is accepting connections. The Linode API reports
+ * Poll until sshd is accepting connections. Cloud providers report
  * "running" before sshd binds, so this bridges the gap.
  */
 export async function sshWaitReady(
@@ -100,89 +99,95 @@ function shellEscape(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
-/**
- * Wait for StackScript to finish installing OpenClaw.
- * Polls `openclaw --version` over SSH until it succeeds or timeout.
- * If the poll times out, attempts a fresh npm install as fallback.
- */
-export async function sshWaitForOpenclaw(
-  target: SshTarget,
-  timeoutMs = 300_000,
-  pollMs = 5_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  let lastErr: unknown
-  while (Date.now() < deadline) {
-    try {
-      const r = await sshRun(target, "command -v openclaw >/dev/null && openclaw --version")
-      if (r.code === 0) return
-    } catch (err) {
-      lastErr = err
-    }
-    await new Promise((r) => setTimeout(r, pollMs))
-  }
+/* ------------------------------------------------------------------ */
+/* VPS bootstrap — replaces the old StackScript approach               */
+/* ------------------------------------------------------------------ */
 
-  // Fallback: StackScript install may have failed. Retry via SSH.
-  const ver = OPENCLAW_VERSION()
-  const installCmd = `SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install -g openclaw@${shellEscape(ver)}`
-  try {
-    const installResult = await sshRun(target, installCmd)
-    if (installResult.code === 0 || installResult.code === null) {
-      const verify = await sshRun(target, "command -v openclaw >/dev/null && openclaw --version")
-      if (verify.code === 0) return
-    }
-  } catch (installErr) {
-    lastErr = installErr
-  }
-
-  throw new Error(
-    `openclaw never became available on ${target.host} within ${timeoutMs}ms (npm fallback also failed)` +
-      (lastErr ? `; last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}` : ""),
-  )
+export type BootstrapOpts = {
+  openclawVersion: string
+  cfOriginCertPem?: string
+  cfOriginKeyPem?: string
+  /** Callback fired after each step for structured logging. */
+  onStep?: (step: SshStepResult) => Promise<void>
 }
 
 /**
- * Idempotently ensure the `openclaw` system user, working directory, and
- * compile cache exist. The StackScript creates these in Phase 3, but if
- * any earlier phase fails (`set -euxo pipefail`) the user is never created.
+ * Full server setup over SSH. Runs each step sequentially with error
+ * checking — replaces the fire-and-forget StackScript.
  */
-export async function sshEnsureOpenclawUser(target: SshTarget): Promise<SshRunResult> {
-  return sshRun(target, [
+export async function sshBootstrapVps(
+  target: SshTarget,
+  opts: BootstrapOpts,
+): Promise<void> {
+  const stage = "bootstrap"
+
+  async function run(label: string, command: string): Promise<SshStepResult> {
+    const step = await sshRunLogged(target, command, stage)
+    if (opts.onStep) await opts.onStep(step)
+    if (step.exitCode !== 0 && step.exitCode !== null) {
+      throw new Error(`Bootstrap failed at "${label}" (exit ${step.exitCode}): ${step.stderr || step.stdout}`)
+    }
+    return step
+  }
+
+  await run("apt_update", "export DEBIAN_FRONTEND=noninteractive && apt-get update -y && apt-get upgrade -y")
+  await run("build_deps", "export DEBIAN_FRONTEND=noninteractive && apt-get install -y ca-certificates curl gnupg ufw git build-essential")
+
+  await run("node_setup", [
+    "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -",
+    "apt-get install -y nodejs",
+    "node -v && npm -v",
+  ].join(" && "))
+
+  await run("create_user", [
     "id openclaw >/dev/null 2>&1 || useradd --system --home-dir /opt/openclaw --shell /usr/sbin/nologin openclaw",
     "mkdir -p /opt/openclaw",
     "chown -R openclaw:openclaw /opt/openclaw",
     "mkdir -p /var/tmp/openclaw-compile-cache",
     "chown openclaw:openclaw /var/tmp/openclaw-compile-cache",
   ].join(" && "))
+
+  const ver = shellEscape(opts.openclawVersion)
+  await run("install_openclaw", `SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install -g openclaw@${ver} && openclaw --version`)
+
+  await run("install_caddy", [
+    "apt-get install -y debian-keyring debian-archive-keyring apt-transport-https",
+    "curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg",
+    "curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list",
+    "apt-get update -y",
+    "apt-get install -y caddy",
+  ].join(" && "))
+
+  if (opts.cfOriginCertPem && opts.cfOriginKeyPem) {
+    const certB64 = Buffer.from(opts.cfOriginCertPem, "utf8").toString("base64")
+    const keyB64 = Buffer.from(opts.cfOriginKeyPem, "utf8").toString("base64")
+    await run("cf_origin_cert", [
+      "install -d -m 0750 -o caddy -g caddy /etc/caddy/cf",
+      `echo ${shellEscape(certB64)} | base64 -d > /etc/caddy/cf/origin.pem`,
+      `echo ${shellEscape(keyB64)} | base64 -d > /etc/caddy/cf/origin.key`,
+      "chown caddy:caddy /etc/caddy/cf/origin.pem /etc/caddy/cf/origin.key",
+      "chmod 0640 /etc/caddy/cf/origin.pem",
+      "chmod 0600 /etc/caddy/cf/origin.key",
+    ].join(" && "))
+
+    const snippet = `*.sovereignclaw.xyz {
+  tls /etc/caddy/cf/origin.pem /etc/caddy/cf/origin.key
+  reverse_proxy 127.0.0.1:18789
 }
-
-/**
- * Phase 5 hard gate: run OpenClaw in the background, verify it responds
- * to a health check on loopback, then kill the test process.
- * Validates the binary works before systemd is involved.
- */
-export async function sshValidateOpenclawBinary(
-  target: SshTarget,
-  port: number,
-  timeoutSec = 10,
-): Promise<void> {
-  const startCmd = [
-    `sudo -u openclaw bash -c 'OPENCLAW_GATEWAY_PORT=${port} openclaw gateway &'`,
-    `sleep ${timeoutSec}`,
-    `curl -sf http://127.0.0.1:${port}/health`,
-  ].join(" && ")
-  const killCmd = `pkill -f 'openclaw gateway' || true`
-
-  try {
-    const result = await sshRun(target, startCmd)
-    if (result.code !== 0 && result.code !== null) {
-      throw new Error(
-        `OpenClaw binary validation failed (exit ${result.code}): ${result.stderr || result.stdout}`,
-      )
-    }
-  } finally {
-    await sshRun(target, killCmd).catch(() => {})
+`
+    const snippetB64 = Buffer.from(snippet, "utf8").toString("base64")
+    await run("caddy_snippet", [
+      "install -d -m 0755 /etc/caddy/snippets",
+      `echo ${shellEscape(snippetB64)} | base64 -d > /etc/caddy/snippets/sovereignclaw.caddy`,
+    ].join(" && "))
   }
+
+  await run("firewall", [
+    "ufw allow 22/tcp || true",
+    "ufw allow 80/tcp || true",
+    "ufw allow 443/tcp || true",
+    "yes | ufw enable || true",
+  ].join(" && "))
 }
 
 /* ------------------------------------------------------------------ */

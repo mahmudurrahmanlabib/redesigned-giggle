@@ -7,22 +7,18 @@ import {
 } from "@/lib/instance-state"
 import { allocatePort, FleetEmptyError, FleetFullError, pickHost } from "@/lib/host-scheduler"
 import {
+  sshBootstrapVps,
   sshDockerRestart,
   sshDockerRm,
   sshDockerRun,
   sshDockerStart,
   sshDockerStop,
-  sshInstallCaddyfile,
   sshRun,
   sshRunLogged,
-  sshSystemctlEnable,
   sshSystemctlRestart,
   sshSystemctlStart,
-  sshSystemctlStatus,
   sshSystemctlStop,
-  sshWaitForOpenclaw,
   sshWaitReady,
-  sshWriteFile,
   type SshTarget,
 } from "@/lib/ssh"
 import { decryptSecret, encryptSecret } from "@/lib/crypto-secret"
@@ -32,19 +28,13 @@ import {
   generateGatewayToken,
   OPENCLAW_GATEWAY_PORT,
   OPENCLAW_SERVICE_NAME,
+  OPENCLAW_VERSION,
   renderCaddyfile,
   renderEnvFile,
   renderOpenclawConfig,
   renderSystemdUnit,
 } from "@/lib/openclaw"
-import {
-  describeLinodeError,
-  ensureSharedHostStackScript,
-  linodeCreateVM,
-  linodeDeleteVM,
-  linodeGetVM,
-  linodeGetVMOrNull,
-} from "@/lib/linode"
+import { getVmProvider, describeVmError } from "@/lib/vm-provider"
 import { createAgentSubdomain, deleteAgentSubdomain } from "@/lib/agent-dns"
 import { generateMockIp } from "@/lib/instance"
 import { routeModel } from "@/lib/model-router"
@@ -60,8 +50,8 @@ const NEXT_PUBLIC_GATEWAY_BASE_URL = () =>
 
 const OPENROUTER_API_KEY = () => process.env.OPENROUTER_API_KEY || ""
 
-const LINODE_FALLBACK_REGION = "us-east"
-const LINODE_FALLBACK_PLAN = "g6-standard-2"
+const FALLBACK_REGION = "us-east"
+const FALLBACK_PLAN = "g6-standard-2"
 
 const OPENCLAW_DIR = "/opt/openclaw"
 
@@ -104,16 +94,17 @@ function buildBotEnv(instance: Instance, extras: BotEnv = {}): BotEnv {
   return { ...env, ...extras }
 }
 
-async function waitForLinodeRunning(linodeId: number, timeoutMs = 180_000): Promise<string> {
+async function waitForVmRunning(vmId: string, timeoutMs = 180_000): Promise<string> {
+  const provider = getVmProvider()
   const started = Date.now()
   while (Date.now() - started < timeoutMs) {
-    const vm = await linodeGetVM(linodeId)
+    const vm = await provider.getVM(vmId)
     if (vm.status === "running" && vm.ipv4?.[0]) {
       return vm.ipv4[0]
     }
     await new Promise((r) => setTimeout(r, 5_000))
   }
-  throw new Error(`Linode ${linodeId} did not reach "running" within ${timeoutMs}ms`)
+  throw new Error(`VM ${vmId} did not reach "running" within ${timeoutMs}ms`)
 }
 
 function generateRootPassword(): string {
@@ -138,15 +129,13 @@ export type ProvisionResult = {
   containerName?: string
   containerPort?: number
   botHostId?: string
-  linodeId?: number
+  vmId?: string
   mocked: boolean
 }
 
 export async function provisionBot(instance: Instance): Promise<ProvisionResult> {
   const target = instance.deploymentTarget ?? "shared"
 
-  // Single-flight: prevent a retried webhook / double-fire from running the
-  // provisioning pipeline concurrently (which would create duplicate VMs).
   const lock = await withInstanceLock(instance.id, async () => {
     return provisionBotLocked(instance, target)
   })
@@ -170,7 +159,6 @@ async function provisionBotLocked(
   instance: Instance,
   target: string,
 ): Promise<ProvisionResult> {
-  // pending → provisioning. Rejects if already provisioning / running / etc.
   await transitionInstance(instance.id, ["pending"], "provisioning", {
     bumpAttempts: "provision",
   })
@@ -261,11 +249,10 @@ async function provisionSharedBot(instance: Instance): Promise<ProvisionResult> 
       mocked: false,
     }
   } catch (err) {
-    // Shared-cluster path has no VM to delete — just mark failed.
     const reason =
       err instanceof FleetEmptyError || err instanceof FleetFullError
         ? err.message
-        : describeLinodeError(err)
+        : describeVmError(err)
     await logInstanceEvent({
       instanceId: instance.id,
       level: "error",
@@ -289,7 +276,7 @@ const VPS_STAGES = [
   "create_vm",
   "wait_boot",
   "waiting_ssh",
-  "validating_binary",
+  "bootstrap",
   "writing_config",
   "installing_service",
   "starting_service",
@@ -311,9 +298,6 @@ async function setProvisionStage(instanceId: string, stage: VpsStage): Promise<v
   })
 }
 
-/**
- * Log every SSH step result to the instance log for full observability.
- */
 async function logSshStep(
   instanceId: string,
   step: Awaited<ReturnType<typeof sshRunLogged>>,
@@ -338,10 +322,6 @@ async function logSshStep(
   })
 }
 
-/**
- * Collect diagnostic logs from the VM for failure analysis.
- * Best-effort — individual commands may fail if SSH is unreachable.
- */
 async function collectDiagnostics(
   target: SshTarget,
   instanceId: string,
@@ -383,51 +363,44 @@ async function collectDiagnostics(
 }
 
 async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
+  const provider = getVmProvider()
   const [region, serverConfig] = await Promise.all([
     db.query.regions.findFirst({ where: eq(regions.id, instance.regionId) }),
     db.query.serverConfigs.findFirst({ where: eq(serverConfigs.id, instance.serverConfigId) }),
   ])
-  const linodeRegion = region?.linodeRegion ?? LINODE_FALLBACK_REGION
-  const linodePlan = serverConfig?.linodePlan ?? LINODE_FALLBACK_PLAN
+  const providerRegion = region?.providerRegion ?? FALLBACK_REGION
+  const providerPlan = serverConfig?.providerPlan ?? FALLBACK_PLAN
 
-  let linodeId: number | undefined = instance.linodeId ?? undefined
+  let vmId: string | undefined = instance.vmId ?? undefined
   let ipAddress: string | undefined = instance.ipAddress ?? undefined
   let currentStage: VpsStage = "create_vm"
 
   try {
-    /* --- 1. Create Linode VM ---------------------------------------- */
+    /* --- 1. Create VM ------------------------------------------------ */
     currentStage = "create_vm"
     await setProvisionStage(instance.id, currentStage)
-    if (!linodeId) {
+    if (!vmId) {
       await logInstanceEvent({
         instanceId: instance.id,
         stage: currentStage,
-        message: `Creating Linode VM (${linodePlan} in ${linodeRegion})...`,
+        message: `Creating VM (${providerPlan} in ${providerRegion})...`,
       })
 
-      const stackScriptId = await ensureSharedHostStackScript()
       const publicKey = process.env.SSH_FLEET_PUBLIC_KEY
-
       const rootPassword = generateRootPassword()
-      const vm = await linodeCreateVM({
+      const vm = await provider.createVM({
         label: `sovereign-vps-${instance.id.slice(0, 8)}`,
-        type: linodePlan,
-        region: linodeRegion,
-        root_pass: rootPassword,
-        stackscript_id: stackScriptId,
-        stackscript_data: {
-          ssh_public_key: publicKey ?? "",
-          cf_origin_cert_b64: process.env.CLOUDFLARE_ORIGIN_CERT_PEM ?? "",
-          cf_origin_key_b64: process.env.CLOUDFLARE_ORIGIN_CERT_KEY ?? "",
-        },
-        authorized_keys: publicKey ? [publicKey] : undefined,
+        plan: providerPlan,
+        region: providerRegion,
+        rootPassword,
+        authorizedKeys: publicKey ? [publicKey] : undefined,
         tags: ["sovereignml", "openclaw", "vps"],
       })
-      linodeId = vm.id
+      vmId = vm.id
 
       await db
         .update(instances)
-        .set({ linodeId, rootPasswordEnc: encryptSecret(rootPassword) })
+        .set({ vmId, rootPasswordEnc: encryptSecret(rootPassword) })
         .where(eq(instances.id, instance.id))
 
       await logInstanceEvent({
@@ -435,8 +408,8 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
         stage: currentStage,
         action: "vm_created",
         result: "ok",
-        detail: { linodeId },
-        message: `VM ${linodeId} created. Waiting for boot...`,
+        detail: { vmId },
+        message: `VM ${vmId} created. Waiting for boot...`,
       })
     }
 
@@ -444,7 +417,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     currentStage = "wait_boot"
     await setProvisionStage(instance.id, currentStage)
     if (!ipAddress) {
-      ipAddress = await waitForLinodeRunning(linodeId!)
+      ipAddress = await waitForVmRunning(vmId!)
       await db
         .update(instances)
         .set({ ipAddress })
@@ -457,6 +430,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
         const { name, recordId } = await createAgentSubdomain(
           instance.id,
           ipAddress,
+          instance.name,
         )
         await db
           .update(instances)
@@ -495,44 +469,26 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     })
     await sshWaitReady(target)
 
-    /* --- 4. Validate OpenClaw binary -------------------------------- */
-    currentStage = "validating_binary"
+    /* --- 4. Bootstrap (install Node, OpenClaw, Caddy over SSH) ------- */
+    currentStage = "bootstrap"
     await setProvisionStage(instance.id, currentStage)
     await logInstanceEvent({
       instanceId: instance.id,
       stage: currentStage,
-      message: "Waiting for OpenClaw binary (StackScript install or SSH fallback)...",
+      message: "Bootstrapping server (Node, OpenClaw, Caddy)...",
     })
-    await sshWaitForOpenclaw(target)
-
-    // Ensure the openclaw user/dirs exist — StackScript may have aborted before Phase 3
-    const userStep = await sshRunLogged(
-      target,
-      "id openclaw >/dev/null 2>&1 || useradd --system --home-dir /opt/openclaw --shell /usr/sbin/nologin openclaw && mkdir -p /opt/openclaw && chown -R openclaw:openclaw /opt/openclaw && mkdir -p /var/tmp/openclaw-compile-cache && chown openclaw:openclaw /var/tmp/openclaw-compile-cache",
-      currentStage,
-    )
-    await logSshStep(instance.id, userStep)
-    if (userStep.exitCode !== 0 && userStep.exitCode !== null) {
-      throw new Error(`Failed to ensure openclaw user: ${userStep.stderr}`)
-    }
-
-    const versionStep = await sshRunLogged(target, "openclaw --version", currentStage)
-    await logSshStep(instance.id, versionStep)
-    if (versionStep.exitCode !== 0 && versionStep.exitCode !== null) {
-      throw new Error(
-        `openclaw --version failed (exit ${versionStep.exitCode}): ${versionStep.stderr || versionStep.stdout}`,
-      )
-    }
-
-    const whichStep = await sshRunLogged(target, "which openclaw", currentStage)
-    await logSshStep(instance.id, whichStep)
-
+    await sshBootstrapVps(target, {
+      openclawVersion: OPENCLAW_VERSION(),
+      cfOriginCertPem: process.env.CLOUDFLARE_ORIGIN_CERT_PEM,
+      cfOriginKeyPem: process.env.CLOUDFLARE_ORIGIN_CERT_KEY,
+      onStep: (step) => logSshStep(instance.id, step),
+    })
     await logInstanceEvent({
       instanceId: instance.id,
       stage: currentStage,
-      action: "binary_validated",
+      action: "bootstrap_complete",
       result: "ok",
-      message: `OpenClaw binary validated: ${versionStep.stdout.trim()}`,
+      message: "Server bootstrap complete. All dependencies installed.",
     })
 
     /* --- 5. Credentials --------------------------------------------- */
@@ -574,7 +530,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       throw new Error(`Failed to write .env: ${envStep.stderr}`)
     }
 
-    /* --- 7. OpenClaw onboard (let it initialize its own config) ----- */
+    /* --- 7. OpenClaw onboard ---------------------------------------- */
     const onboardStep = await sshRunLogged(
       target,
       `sudo -u openclaw HOME=${OPENCLAW_DIR} /usr/bin/openclaw onboard --mode local --yes 2>&1`,
@@ -591,7 +547,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       })
     }
 
-    /* --- 8. Overlay our settings via openclaw config set ------------ */
+    /* --- 8. Overlay settings via openclaw config set ----------------- */
     const allowedOrigin = instance.domain
       ? `https://${instance.domain}`
       : `http://${ipAddress}`
@@ -617,7 +573,6 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       await logSshStep(instance.id, step)
     }
 
-    // Doctor to validate final config (log only, don't fail)
     const doctorStep = await sshRunLogged(
       target,
       `sudo -u openclaw HOME=${OPENCLAW_DIR} /usr/bin/openclaw doctor 2>&1 || true`,
@@ -625,7 +580,6 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     )
     await logSshStep(instance.id, doctorStep)
 
-    // Log the final config for debugging
     const configDump = await sshRunLogged(
       target,
       `cat ${OPENCLAW_DIR}/.openclaw/openclaw.json 2>/dev/null || echo 'no config file'`,
@@ -633,7 +587,6 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     )
     await logSshStep(instance.id, configDump)
 
-    // Caddyfile
     const caddyContent = renderCaddyfile({ domain: instance.domain })
     const caddyB64 = Buffer.from(caddyContent, "utf8").toString("base64")
     const caddyStep = await sshRunLogged(
@@ -680,7 +633,6 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     )
     await logSshStep(instance.id, startStep)
 
-    // Wait for the service to settle, then verify it's still alive (not crash-looping)
     await new Promise((r) => setTimeout(r, 8_000))
     const stableCheck = await sshRunLogged(
       target,
@@ -700,7 +652,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       )
     }
 
-    /* --- 11. Health check: is port 18789 open? ---------------------- */
+    /* --- 11. Health check ------------------------------------------- */
     currentStage = "health_check"
     await setProvisionStage(instance.id, currentStage)
 
@@ -739,13 +691,13 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       message: `Port ${OPENCLAW_GATEWAY_PORT} is listening. OpenClaw is running.`,
     })
 
-    /* --- 11. Commit state ------------------------------------------- */
+    /* --- 12. Commit state ------------------------------------------- */
     currentStage = "commit"
     await setProvisionStage(instance.id, currentStage)
     await transitionInstance(instance.id, ["provisioning"], "running", {
       set: {
         ipAddress,
-        linodeId,
+        vmId,
         containerName: OPENCLAW_SERVICE_NAME,
         containerPort: OPENCLAW_GATEWAY_PORT,
         openclawAdminEmail: adminEmail,
@@ -772,11 +724,10 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       ipAddress,
       containerName: OPENCLAW_SERVICE_NAME,
       containerPort: OPENCLAW_GATEWAY_PORT,
-      linodeId,
+      vmId,
       mocked: false,
     }
   } catch (err) {
-    // Collect diagnostics before rollback (best-effort)
     if (ipAddress) {
       try {
         await collectDiagnostics({ host: ipAddress }, instance.id)
@@ -784,54 +735,45 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
         // diagnostics collection itself failed — don't mask the original error
       }
     }
-    await rollbackProvisioning(instance.id, linodeId, currentStage, err)
+    await rollbackProvisioning(instance.id, vmId, currentStage, err)
     throw err
   }
 }
 
-/**
- * Roll back a failed provisioning attempt.
- *
- * 1. Log the failing stage with a structured `rollback` event.
- * 2. If a Linode VM was created, retry `linodeDeleteVM` with backoff.
- * 3. Transition to `failed_provisioning`. On delete success clear linodeId/ip
- *    so the row is clean. On delete failure keep the id so the reconciler
- *    picks it up on the next pass.
- * 4. Persist `failedStage` on the instance row.
- */
 async function rollbackProvisioning(
   instanceId: string,
-  linodeId: number | undefined,
+  vmId: string | undefined,
   stage: string,
   err: unknown,
 ): Promise<void> {
-  const reason = describeLinodeError(err)
+  const reason = describeVmError(err)
   await logInstanceEvent({
     instanceId,
     level: "error",
     stage,
     action: "failed",
     result: "error",
-    detail: { linodeId },
+    detail: { vmId },
     message: `Provisioning failed at ${stage}: ${reason}`,
   })
 
   let vmDeleted = false
   const keepVms = process.env.KEEP_FAILED_VMS === "true"
-  if (linodeId && keepVms) {
+  if (vmId && keepVms) {
     await logInstanceEvent({
       instanceId,
       level: "warn",
       stage: "rollback",
       action: "keep_vm",
-      detail: { linodeId },
-      message: `KEEP_FAILED_VMS=true — VM ${linodeId} preserved for debugging. Delete manually when done.`,
+      detail: { vmId },
+      message: `KEEP_FAILED_VMS=true — VM ${vmId} preserved for debugging. Delete manually when done.`,
     })
-  } else if (linodeId) {
+  } else if (vmId) {
+    const provider = getVmProvider()
     const backoffMs = [1_000, 4_000, 16_000]
     for (let i = 0; i < backoffMs.length; i++) {
       try {
-        await linodeDeleteVM(linodeId)
+        await provider.deleteVM(vmId)
         vmDeleted = true
         break
       } catch (delErr) {
@@ -841,8 +783,8 @@ async function rollbackProvisioning(
           stage: "rollback",
           action: "delete_vm_retry",
           result: "error",
-          detail: { linodeId, attempt: i + 1 },
-          message: `linodeDeleteVM retry ${i + 1} failed: ${describeLinodeError(delErr)}`,
+          detail: { vmId, attempt: i + 1 },
+          message: `deleteVM retry ${i + 1} failed: ${describeVmError(delErr)}`,
         })
         if (i < backoffMs.length - 1) {
           await new Promise((r) => setTimeout(r, backoffMs[i]))
@@ -853,7 +795,7 @@ async function rollbackProvisioning(
 
   const setFields: Record<string, unknown> = { failedStage: stage }
   if (vmDeleted) {
-    setFields.linodeId = null
+    setFields.vmId = null
     setFields.ipAddress = null
   }
 
@@ -868,10 +810,10 @@ async function rollbackProvisioning(
     stage: "rollback",
     action: vmDeleted ? "vm_deleted" : "orphan_pending",
     result: vmDeleted ? "ok" : "error",
-    detail: { linodeId },
+    detail: { vmId },
     message: vmDeleted
-      ? `Rollback complete. Linode VM ${linodeId} deleted.`
-      : `Rollback incomplete. Linode VM ${linodeId} still exists — awaiting reconciler.`,
+      ? `Rollback complete. VM ${vmId} deleted.`
+      : `Rollback incomplete. VM ${vmId} still exists — awaiting reconciler.`,
   })
 }
 
@@ -880,7 +822,6 @@ async function rollbackProvisioning(
 /* ------------------------------------------------------------------ */
 
 export async function restartBot(instance: Instance): Promise<void> {
-  // Restart doesn't change status — it only bumps lastActiveAt.
   if (isLiveMode() && instance.ipAddress) {
     if (isVps(instance)) {
       await sshSystemctlRestart({ host: instance.ipAddress }, OPENCLAW_SERVICE_NAME)
@@ -937,30 +878,9 @@ export async function resumeBot(instance: Instance): Promise<void> {
   })
 }
 
-/**
- * Result of a deletion attempt. `deleted` means the row is now in the
- * `deleted` state. `pending` means Linode delete failed and the row is
- * still in `deleting` — the reconciler will sweep it up.
- */
-export type DeleteResult = { status: "deleted" | "pending"; linodeId?: number }
+export type DeleteResult = { status: "deleted" | "pending"; vmId?: string }
 
-/**
- * Delete an instance. Authoritative contract:
- *
- *   - Transitions to `deleting` atomically (rejects if row is already
- *     `deleted` or not in a deletable state).
- *   - For VPS: retries Linode DELETE with exponential backoff. Verifies
- *     the VM is gone via linodeGetVMOrNull(). On success, transitions to
- *     `deleted`. On exhausted retries, leaves the row in `deleting` so
- *     the reconciler picks it up — DOES NOT silently mark deleted.
- *   - For shared-cluster: docker rm, then mark deleted.
- *
- * Callers should surface the `status` field to the client — `pending`
- * should render as "Deletion in progress" and return HTTP 202.
- */
 export async function deleteBot(instance: Instance): Promise<DeleteResult> {
-  // Transition into `deleting`. Legal predecessors: running | stopped |
-  // failed_provisioning | provisioning | failed (legacy). If already deleting/deleted, throws.
   await transitionInstance(
     instance.id,
     ["running", "stopped", "failed_provisioning", "provisioning", "failed"],
@@ -975,8 +895,6 @@ export async function deleteBot(instance: Instance): Promise<DeleteResult> {
     message: "Deletion started.",
   })
 
-  // Cloudflare managed subdomain cleanup. Best-effort: a failure here must not
-  // block VM deletion. Reconciler can sweep orphans later.
   if (
     process.env.CLOUDFLARE_API_TOKEN &&
     process.env.CLOUDFLARE_ZONE_ID &&
@@ -1008,7 +926,6 @@ export async function deleteBot(instance: Instance): Promise<DeleteResult> {
     }
   }
 
-  // Shared-cluster path: docker rm. No VM to delete.
   if (!isVps(instance)) {
     if (isLiveMode() && instance.ipAddress && instance.containerName) {
       try {
@@ -1020,7 +937,7 @@ export async function deleteBot(instance: Instance): Promise<DeleteResult> {
           stage: "delete",
           action: "docker_rm",
           result: "error",
-          message: `docker rm failed (continuing): ${describeLinodeError(err)}`,
+          message: `docker rm failed (continuing): ${describeVmError(err)}`,
         })
       }
     }
@@ -1038,13 +955,9 @@ export async function deleteBot(instance: Instance): Promise<DeleteResult> {
     return { status: "deleted" }
   }
 
-  // VPS path: delete the whole Linode VM. No need to clean up systemd /
-  // /opt/openclaw first — the VM is going away.
-  if (!isLiveMode() || !instance.linodeId) {
-    // Dev mode or a row that never provisioned a VM: nothing to do in
-    // Linode. Just flip to deleted.
+  if (!isLiveMode() || !instance.vmId) {
     await transitionInstance(instance.id, ["deleting"], "deleted", {
-      set: { ipAddress: null, linodeId: null },
+      set: { ipAddress: null, vmId: null },
     })
     await logInstanceEvent({
       instanceId: instance.id,
@@ -1052,23 +965,23 @@ export async function deleteBot(instance: Instance): Promise<DeleteResult> {
       stage: "delete",
       action: "completed",
       result: "ok",
-      message: "Instance deleted (no Linode VM to clean up).",
+      message: "Instance deleted (no VM to clean up).",
     })
     return { status: "deleted" }
   }
 
-  const linodeId = instance.linodeId
+  const provider = getVmProvider()
+  const vmId = instance.vmId
   const backoffMs = [1_000, 4_000, 16_000, 60_000, 300_000]
   let lastErr: unknown = null
 
   for (let i = 0; i < backoffMs.length; i++) {
     try {
-      const deleted = await linodeDeleteVM(linodeId)
-      // Verify with a follow-up GET. 404 = gone. Anything else = still there.
-      const after = await linodeGetVMOrNull(linodeId)
+      const deleted = await provider.deleteVM(vmId)
+      const after = await provider.getVMOrNull(vmId)
       if (after == null || deleted) {
         await transitionInstance(instance.id, ["deleting"], "deleted", {
-          set: { ipAddress: null, linodeId: null },
+          set: { ipAddress: null, vmId: null },
         })
         await logInstanceEvent({
           instanceId: instance.id,
@@ -1076,13 +989,12 @@ export async function deleteBot(instance: Instance): Promise<DeleteResult> {
           stage: "delete",
           action: "completed",
           result: "ok",
-          detail: { linodeId, attempts: i + 1 },
-          message: `Linode VM ${linodeId} deleted and verified gone.`,
+          detail: { vmId, attempts: i + 1 },
+          message: `VM ${vmId} deleted and verified gone.`,
         })
-        return { status: "deleted", linodeId }
+        return { status: "deleted", vmId }
       }
-      // VM still exists despite no error — treat as transient.
-      lastErr = new Error(`VM ${linodeId} still present after DELETE`)
+      lastErr = new Error(`VM ${vmId} still present after DELETE`)
     } catch (err) {
       lastErr = err
     }
@@ -1092,19 +1004,17 @@ export async function deleteBot(instance: Instance): Promise<DeleteResult> {
       stage: "delete",
       action: "retry",
       result: "error",
-      detail: { linodeId, attempt: i + 1 },
-      message: `linodeDeleteVM attempt ${i + 1} failed: ${describeLinodeError(lastErr)}`,
+      detail: { vmId, attempt: i + 1 },
+      message: `deleteVM attempt ${i + 1} failed: ${describeVmError(lastErr)}`,
     })
     if (i < backoffMs.length - 1) {
       await new Promise((r) => setTimeout(r, backoffMs[i]))
     }
   }
 
-  // Retries exhausted. Leave row in `deleting` for the reconciler. Record
-  // the error but do NOT silently mark deleted.
   await db
     .update(instances)
-    .set({ lastError: `delete retries exhausted: ${describeLinodeError(lastErr)}` })
+    .set({ lastError: `delete retries exhausted: ${describeVmError(lastErr)}` })
     .where(eq(instances.id, instance.id))
   await logInstanceEvent({
     instanceId: instance.id,
@@ -1112,16 +1022,12 @@ export async function deleteBot(instance: Instance): Promise<DeleteResult> {
     stage: "delete",
     action: "pending_reconciler",
     result: "error",
-    detail: { linodeId },
-    message: `Linode delete failed after ${backoffMs.length} retries. Reconciler will sweep.`,
+    detail: { vmId },
+    message: `VM delete failed after ${backoffMs.length} retries. Reconciler will sweep.`,
   })
-  return { status: "pending", linodeId }
+  return { status: "pending", vmId }
 }
 
-/**
- * Re-apply the bot's env/config by rewriting files and restarting.
- * Used after token rotation, Telegram bind, env edit, etc.
- */
 export async function reprovisionBotEnv(instance: Instance): Promise<void> {
   if (!isLiveMode() || !instance.ipAddress) {
     await db.insert(instanceLogs).values({
@@ -1159,6 +1065,7 @@ export async function reprovisionBotEnv(instance: Instance): Promise<void> {
       ? decryptSecret(instance.gatewayTokenEnc)
       : generateGatewayToken()
 
+    const { sshWriteFile } = await import("@/lib/ssh")
     await sshWriteFile(
       target,
       `${OPENCLAW_DIR}/.openclaw/openclaw.json`,

@@ -183,7 +183,7 @@ async function main() {
           create: {
             id: r.id,
             label: r.label,
-            linodeId: r.linodeId,
+            vmId: String(r.linodeId),
             ipAddress: r.ipAddress,
             region: r.region,
             plan: r.plan,
@@ -345,7 +345,7 @@ async function main() {
             botHostId: r.botHostId,
             containerName: r.containerName,
             containerPort: r.containerPort,
-            linodeId: r.linodeId,
+            vmId: r.linodeId ? String(r.linodeId) : null,
             createdAt: new Date(r.createdAt),
             updatedAt: new Date(r.updatedAt),
           },

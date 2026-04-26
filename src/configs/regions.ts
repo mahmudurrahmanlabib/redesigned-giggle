@@ -1,7 +1,7 @@
 // Deployment regions. Edit this list to add/remove locations across the app.
 // The seed script writes these into the Region table so FKs work,
 // but the wizard reads directly from this typed array.
-// linodeRegion must match actual Linode API region slugs.
+// providerRegion must match the active VM provider's region slugs.
 
 export type RegionConfig = {
   slug: string
@@ -10,7 +10,7 @@ export type RegionConfig = {
   flag: string
   available: boolean
   sortOrder: number
-  linodeRegion: string
+  providerRegion: string
 }
 
 export const REGIONS: readonly RegionConfig[] = [
@@ -21,7 +21,7 @@ export const REGIONS: readonly RegionConfig[] = [
     flag: "\u{1F1FA}\u{1F1F8}",
     available: true,
     sortOrder: 10,
-    linodeRegion: "us-east",
+    providerRegion: "us-east",
   },
   {
     slug: "us-west-1",
@@ -30,7 +30,7 @@ export const REGIONS: readonly RegionConfig[] = [
     flag: "\u{1F1FA}\u{1F1F8}",
     available: true,
     sortOrder: 20,
-    linodeRegion: "us-west",
+    providerRegion: "us-west",
   },
   {
     slug: "eu-central-1",
@@ -39,7 +39,7 @@ export const REGIONS: readonly RegionConfig[] = [
     flag: "\u{1F1E9}\u{1F1EA}",
     available: true,
     sortOrder: 30,
-    linodeRegion: "eu-central",
+    providerRegion: "eu-central",
   },
   {
     slug: "eu-west-1",
@@ -48,7 +48,7 @@ export const REGIONS: readonly RegionConfig[] = [
     flag: "\u{1F1EC}\u{1F1E7}",
     available: false,
     sortOrder: 40,
-    linodeRegion: "eu-west",
+    providerRegion: "eu-west",
   },
   {
     slug: "ap-south-1",
@@ -57,7 +57,7 @@ export const REGIONS: readonly RegionConfig[] = [
     flag: "\u{1F1F8}\u{1F1EC}",
     available: true,
     sortOrder: 50,
-    linodeRegion: "ap-south",
+    providerRegion: "ap-south",
   },
   {
     slug: "ap-northeast-1",
@@ -66,6 +66,6 @@ export const REGIONS: readonly RegionConfig[] = [
     flag: "\u{1F1EF}\u{1F1F5}",
     available: false,
     sortOrder: 60,
-    linodeRegion: "ap-northeast",
+    providerRegion: "ap-northeast",
   },
 ] as const

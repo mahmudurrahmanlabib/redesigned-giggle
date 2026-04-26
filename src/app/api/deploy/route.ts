@@ -12,7 +12,7 @@ import { selectSkills } from "@/configs/skill-map"
 import { generateSoul } from "@/lib/soul"
 import { routeModel } from "@/lib/model-router"
 import { provisionBot } from "@/lib/provisioner"
-import { describeLinodeError } from "@/lib/linode"
+import { describeVmError } from "@/lib/vm-provider"
 import { grantCredits } from "@/lib/credits"
 
 export async function POST(req: NextRequest) {
@@ -88,7 +88,6 @@ export async function POST(req: NextRequest) {
 
   if (isVps) {
     const required = [
-      "LINODE_API_TOKEN",
       "SSH_FLEET_PRIVATE_KEY",
       "SSH_FLEET_PUBLIC_KEY",
       "OPENROUTER_API_KEY",
@@ -239,7 +238,7 @@ export async function POST(req: NextRequest) {
       } catch (err) {
         console.error(
           "[deploy] provisionBot failed (free tier):",
-          describeLinodeError(err),
+          describeVmError(err),
         )
       }
     })()
@@ -344,7 +343,7 @@ export async function POST(req: NextRequest) {
     } catch (err) {
       console.error(
         "[deploy] provisionBot failed (dev path):",
-        describeLinodeError(err),
+        describeVmError(err),
       )
     }
   })()

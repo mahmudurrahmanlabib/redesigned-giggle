@@ -56,7 +56,7 @@ export class IllegalTransitionError extends Error {
 }
 
 type TransitionOpts = {
-  /** Extra columns to set in the same UPDATE (e.g. ipAddress, linodeId). */
+  /** Extra columns to set in the same UPDATE (e.g. ipAddress, vmId). */
   set?: Record<string, unknown>
   /** Appended to lastError; cleared when omitted and transition is to a
    *  non-failure state. */

@@ -183,7 +183,7 @@ export const regions = pgTable(
     flag: text().notNull(),
     available: boolean().default(true).notNull(),
     sortOrder: integer().default(0).notNull(),
-    linodeRegion: text().default("us-east").notNull(),
+    providerRegion: text().default("us-east").notNull(),
   },
   (t) => [uniqueIndex("Region_slug_key").on(t.slug)],
 )
@@ -202,7 +202,7 @@ export const serverConfigs = pgTable(
     priceYearly: doublePrecision().notNull(),
     sortOrder: integer().default(0).notNull(),
     isActive: boolean().default(true).notNull(),
-    linodePlan: text().default("g6-standard-2").notNull(),
+    providerPlan: text().default("g6-standard-2").notNull(),
   },
   (t) => [uniqueIndex("ServerConfig_slug_key").on(t.slug)],
 )
@@ -276,7 +276,7 @@ export const instances = pgTable(
     botHostId: text().references(() => botHosts.id),
     containerName: text(),
     containerPort: integer(),
-    linodeId: integer(),
+    vmId: text(),
 
     // OpenClaw agent deploy — dns/tls are only populated when a domain is
     // configured. NULL = "not applicable", never synthesize a fake value.
@@ -313,7 +313,7 @@ export const botHosts = pgTable(
   {
     id: cuid().primaryKey(),
     label: text().notNull(),
-    linodeId: integer().notNull(),
+    vmId: text().notNull(),
     ipAddress: text().notNull(),
     region: text().notNull(),
     plan: text().notNull(),
@@ -326,7 +326,7 @@ export const botHosts = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [
-    uniqueIndex("BotHost_linodeId_key").on(t.linodeId),
+    uniqueIndex("BotHost_vmId_key").on(t.vmId),
     index("BotHost_status_idx").on(t.status),
   ],
 )
@@ -392,13 +392,13 @@ export const instanceLogs = pgTable(
   (t) => [index("InstanceLog_instanceId_idx").on(t.instanceId)],
 )
 
-// OrphanEvent — one row per reconciler decision: "VM exists in Linode but no
-// DB row owns it" or "DB says deleting but Linode still has it".
+// OrphanEvent — one row per reconciler decision: "VM exists in provider but no
+// DB row owns it" or "DB says deleting but provider still has it".
 export const orphanEvents = pgTable(
   "OrphanEvent",
   {
     id: cuid().primaryKey(),
-    linodeId: integer().notNull(),
+    vmId: text().notNull(),
     instanceId: text().references(() => instances.id, { onDelete: "set null" }),
     action: text().notNull(), // detected | delete_attempted | deleted | failed
     detectedAt: now(),
@@ -406,7 +406,7 @@ export const orphanEvents = pgTable(
     detail: text(),
   },
   (t) => [
-    index("OrphanEvent_linodeId_idx").on(t.linodeId),
+    index("OrphanEvent_vmId_idx").on(t.vmId),
     index("OrphanEvent_action_idx").on(t.action),
   ],
 )

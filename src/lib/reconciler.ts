@@ -1,13 +1,13 @@
 // Reconciliation worker. Runs periodically (cron or admin-triggered) to
-// ensure DB state matches actual Linode state. The reconciler is the
+// ensure DB state matches actual provider state. The reconciler is the
 // orphan-prevention backstop for crashes, missed webhooks, and partial
 // delete failures.
 //
 // Six passes, each logged independently so operators can see what ran:
 //
-//   1. Orphan sweep       — VMs in Linode not owned by any DB row → delete.
+//   1. Orphan sweep       — VMs in provider not owned by any DB row → delete.
 //   2. Deleting retries   — rows in `deleting` whose VM still exists → retry.
-//   3. Failed cleanups    — rows in `failed_provisioning` with a linodeId → delete VM.
+//   3. Failed cleanups    — rows in `failed_provisioning` with a vmId → delete VM.
 //   4. Stuck provisioning — rows in `provisioning` older than TTL → rollback.
 //   5. DB confirmation    — rows in `deleting` whose VM is gone → mark deleted.
 //   6. Stamp reconciledAt — every instance row touched.
@@ -22,12 +22,7 @@ import {
   inArray,
   sql,
 } from "@/db"
-import {
-  describeLinodeError,
-  linodeDeleteVM,
-  linodeGetVMOrNull,
-  linodeListAllVMs,
-} from "@/lib/linode"
+import { getVmProvider, describeVmError } from "@/lib/vm-provider"
 import { logInstanceEvent, transitionInstance } from "@/lib/instance-state"
 
 const ORPHAN_GRACE_MS = 15 * 60 * 1000 // 15 minutes — gives in-flight creates room to commit
@@ -45,6 +40,7 @@ type ReconcileReport = {
 }
 
 export async function runReconciler(): Promise<ReconcileReport> {
+  const provider = getVmProvider()
   const report: ReconcileReport = {
     orphansDetected: 0,
     orphansDeleted: 0,
@@ -55,47 +51,46 @@ export async function runReconciler(): Promise<ReconcileReport> {
     errors: [],
   }
 
-  // Collect DB-owned linodeIds for fast lookup. A row counts as "owning" its
-  // linodeId unless it's in `deleted` state.
+  // Collect DB-owned vmIds for fast lookup. A row counts as "owning" its
+  // vmId unless it's in `deleted` state.
   const owned = await db.query.instances.findMany({
     where: and(
-      isNotNull(instances.linodeId),
+      isNotNull(instances.vmId),
       sql`${instances.status} != 'deleted'`,
     ),
-    columns: { id: true, status: true, linodeId: true, createdAt: true, lastTransitionAt: true },
+    columns: { id: true, status: true, vmId: true, createdAt: true, lastTransitionAt: true },
   })
-  const ownedIds = new Set<number>(owned.map((r) => r.linodeId!).filter(Boolean))
+  const ownedIds = new Set<string>(owned.map((r) => r.vmId!).filter(Boolean))
 
   // ─────────────────────────────────────────────────────────────────────
-  // Pass 1: Orphan sweep — anything in Linode tagged "sovereignml" with
+  // Pass 1: Orphan sweep — anything in provider tagged "sovereignml" with
   // no matching DB row AND older than the grace period → delete.
   // ─────────────────────────────────────────────────────────────────────
-  let linodeVms: Awaited<ReturnType<typeof linodeListAllVMs>> = []
+  let providerVms: Awaited<ReturnType<typeof provider.listVMs>> = []
   try {
-    linodeVms = await linodeListAllVMs({ tag: TAG })
+    providerVms = await provider.listVMs({ tag: TAG })
   } catch (err) {
-    report.errors.push(`linodeListAllVMs: ${describeLinodeError(err)}`)
+    report.errors.push(`listVMs: ${describeVmError(err)}`)
   }
 
   const now = Date.now()
-  for (const vm of linodeVms) {
+  for (const vm of providerVms) {
     if (ownedIds.has(vm.id)) continue
     const createdMs = vm.created ? Date.parse(vm.created) : now
-    if (now - createdMs < ORPHAN_GRACE_MS) continue // in-flight — skip
+    if (now - createdMs < ORPHAN_GRACE_MS) continue
 
     report.orphansDetected++
-    // Log detection BEFORE attempting delete so we have a record either way.
     const [detected] = await db
       .insert(orphanEvents)
       .values({
-        linodeId: vm.id,
+        vmId: vm.id,
         action: "detected",
         detail: `label=${vm.label ?? ""}; createdAt=${vm.created ?? ""}`,
       })
       .returning()
 
     try {
-      const deleted = await linodeDeleteVM(vm.id)
+      const deleted = await provider.deleteVM(vm.id)
       report.orphansDeleted += deleted ? 1 : 0
       await db
         .update(orphanEvents)
@@ -105,7 +100,7 @@ export async function runReconciler(): Promise<ReconcileReport> {
         })
         .where(eq(orphanEvents.id, detected.id))
     } catch (err) {
-      const msg = describeLinodeError(err)
+      const msg = describeVmError(err)
       report.errors.push(`orphan ${vm.id}: ${msg}`)
       await db
         .update(orphanEvents)
@@ -119,12 +114,12 @@ export async function runReconciler(): Promise<ReconcileReport> {
   // ─────────────────────────────────────────────────────────────────────
   const deletingRows = owned.filter((r) => r.status === "deleting")
   for (const row of deletingRows) {
-    if (!row.linodeId) continue
+    if (!row.vmId) continue
     try {
-      const vm = await linodeGetVMOrNull(row.linodeId)
+      const vm = await provider.getVMOrNull(row.vmId)
       if (!vm) {
         await transitionInstance(row.id, ["deleting"], "deleted", {
-          set: { linodeId: null, ipAddress: null },
+          set: { vmId: null, ipAddress: null },
         })
         report.deletingCompleted++
         await logInstanceEvent({
@@ -135,18 +130,18 @@ export async function runReconciler(): Promise<ReconcileReport> {
           message: "Reconciler confirmed VM is gone; instance marked deleted.",
         })
       } else {
-        await linodeDeleteVM(row.linodeId)
+        await provider.deleteVM(row.vmId)
         report.deletingRetried++
         await logInstanceEvent({
           instanceId: row.id,
           stage: "reconcile",
           action: "delete_retry",
           result: "ok",
-          message: `Reconciler retried linodeDeleteVM(${row.linodeId}).`,
+          message: `Reconciler retried deleteVM(${row.vmId}).`,
         })
       }
     } catch (err) {
-      const msg = describeLinodeError(err)
+      const msg = describeVmError(err)
       report.errors.push(`deleting ${row.id}: ${msg}`)
       await logInstanceEvent({
         instanceId: row.id,
@@ -160,28 +155,28 @@ export async function runReconciler(): Promise<ReconcileReport> {
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  // Pass 3: failed_provisioning rows that still have a linodeId.
+  // Pass 3: failed_provisioning rows that still have a vmId.
   // ─────────────────────────────────────────────────────────────────────
   const failedRows = owned.filter(
-    (r) => r.status === "failed_provisioning" && r.linodeId != null,
+    (r) => r.status === "failed_provisioning" && r.vmId != null,
   )
   for (const row of failedRows) {
     try {
-      const deleted = await linodeDeleteVM(row.linodeId!)
+      const deleted = await provider.deleteVM(row.vmId!)
       report.failedCleanups += deleted ? 1 : 0
       await db
         .update(instances)
-        .set({ linodeId: null, ipAddress: null })
+        .set({ vmId: null, ipAddress: null })
         .where(eq(instances.id, row.id))
       await logInstanceEvent({
         instanceId: row.id,
         stage: "reconcile",
         action: "failed_cleanup",
         result: "ok",
-        message: `Reconciler cleaned orphan VM ${row.linodeId} for failed instance.`,
+        message: `Reconciler cleaned orphan VM ${row.vmId} for failed instance.`,
       })
     } catch (err) {
-      const msg = describeLinodeError(err)
+      const msg = describeVmError(err)
       report.errors.push(`failed ${row.id}: ${msg}`)
     }
   }
@@ -196,19 +191,18 @@ export async function runReconciler(): Promise<ReconcileReport> {
     if (now - stamp.getTime() < PROVISIONING_TTL_MS) continue
 
     report.stuckProvisioning++
-    // Best-effort delete VM if one was created, then flip to failed_provisioning.
     let vmDeleted = false
-    if (row.linodeId) {
+    if (row.vmId) {
       try {
-        vmDeleted = await linodeDeleteVM(row.linodeId)
+        vmDeleted = await provider.deleteVM(row.vmId)
       } catch (err) {
-        report.errors.push(`stuck ${row.id}: ${describeLinodeError(err)}`)
+        report.errors.push(`stuck ${row.id}: ${describeVmError(err)}`)
       }
     }
     try {
       await transitionInstance(row.id, ["provisioning"], "failed_provisioning", {
         error: "timed out — reclaimed by reconciler",
-        set: vmDeleted ? { linodeId: null, ipAddress: null } : {},
+        set: vmDeleted ? { vmId: null, ipAddress: null } : {},
       })
       await logInstanceEvent({
         instanceId: row.id,
@@ -216,7 +210,7 @@ export async function runReconciler(): Promise<ReconcileReport> {
         stage: "reconcile",
         action: "stuck_provisioning_reclaimed",
         result: vmDeleted ? "ok" : "error",
-        detail: { linodeId: row.linodeId, vmDeleted },
+        detail: { vmId: row.vmId, vmDeleted },
         message: `Stuck provisioning row reclaimed after ${PROVISIONING_TTL_MS / 60000}min TTL.`,
       })
     } catch (err) {
@@ -242,8 +236,9 @@ export async function runReconciler(): Promise<ReconcileReport> {
   console.log(
     JSON.stringify({
       kind: "reconcile_report",
+      provider: provider.name,
       ...report,
-      scannedLinodeVMs: linodeVms.length,
+      scannedProviderVMs: providerVms.length,
       scannedDbRows: owned.length,
     }),
   )

@@ -141,7 +141,7 @@ export function renderCaddyfile(args: { domain?: string | null }): string {
 
 /**
  * systemd unit for the OpenClaw Gateway daemon.
- * Runs as the dedicated `openclaw` user created by the StackScript.
+ * Runs as the dedicated `openclaw` user created during SSH bootstrap.
  */
 export function renderSystemdUnit(): string {
   return `[Unit]

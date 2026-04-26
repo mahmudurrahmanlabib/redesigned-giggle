@@ -13,7 +13,7 @@ import {
 } from "@/db"
 import { provisionBot } from "@/lib/provisioner"
 import { grantCredits } from "@/lib/credits"
-import { describeLinodeError } from "@/lib/linode"
+import { describeVmError } from "@/lib/vm-provider"
 
 // ---------- checkout.session.completed ----------
 // Triggered when the user finishes paying. Flips Instance to "running",
@@ -77,7 +77,7 @@ export async function handleCheckoutSessionCompleted(
   } catch (err) {
     // provisionBot handles its own rollback + state transition. Just log.
     console.error(
-      `[stripe] provisionBot failed for ${instanceId}: ${describeLinodeError(err)}`,
+      `[stripe] provisionBot failed for ${instanceId}: ${describeVmError(err)}`,
     )
   }
 
