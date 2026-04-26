@@ -133,20 +133,65 @@ echo "=== provision: write_config_done ==="
 `
 }
 
+/** Wall-clock for Phase B remote script (Caddy + systemd). Must cover validate + 60s poll + daemon-reload/enable. */
+const PROVISION_PHASE_B_SSH_TIMEOUT_MS = 120_000
+
 /** Phase B — install Caddy config + systemd unit (no service start yet). */
 function buildPhaseInstallService(opts: { caddyB64: string; unitB64: string }): string {
   return `#!/bin/bash
-set -euo pipefail
+set -uo pipefail
+export SYSTEMD_PAGER=cat
 SERVICE=${bashSingleQuoteForScript(OPENCLAW_SERVICE_NAME)}
 
-echo "=== provision: caddy ==="
+echo "=== provision: caddyfile_write ==="
 echo ${bashSingleQuoteForScript(opts.caddyB64)} | base64 -d > /etc/caddy/Caddyfile
-timeout 30s bash -c 'systemctl reload caddy || systemctl restart caddy'
+
+# Validate first so a bad Caddyfile fails fast with a clear error rather than
+# blocking a reload/restart.
+echo "=== provision: caddy_validate ==="
+if ! timeout 30s /usr/bin/caddy validate --config /etc/caddy/Caddyfile; then
+  echo "caddy validate failed" >&2
+  exit 1
+fi
+
+# Restart (not reload) so the new config is always picked up cleanly even on
+# the first deploy. Use --no-block + explicit polling: \`systemctl restart\`
+# blocks until the unit reaches "active" or hits TimeoutStartSec, and on a
+# fresh VPS Caddy provisioning its internal CA + binding :443 with a new
+# hostname can exceed a tight wall-clock. --no-block returns immediately and
+# we poll is-active ourselves so we can emit progress.
+echo "=== provision: caddy_restart ==="
+systemctl --no-block restart caddy
+echo "=== provision: caddy_wait_active ==="
+ACTIVE_OK=0
+for _ in \$(seq 1 60); do
+  if systemctl is-active --quiet caddy; then
+    ACTIVE_OK=1
+    break
+  fi
+  if systemctl is-failed --quiet caddy; then
+    break
+  fi
+  sleep 1
+done
+if [ "\${ACTIVE_OK}" != "1" ]; then
+  echo "caddy did not reach active within 60s" >&2
+  systemctl status caddy --no-pager -l || true
+  journalctl -u caddy --no-pager -n 80 || true
+  exit 1
+fi
+echo "=== provision: caddy_active ==="
 
 echo "=== provision: systemd ==="
+set -e
+echo "=== provision: systemd_unit_file ==="
 echo ${bashSingleQuoteForScript(opts.unitB64)} | base64 -d > "/etc/systemd/system/\${SERVICE}.service"
-timeout 20s systemctl daemon-reload
-timeout 20s systemctl enable "\${SERVICE}"
+echo "=== provision: systemd_daemon_reload ==="
+# No per-command \`timeout\` here: GNU \`timeout\` exits 124 and was too tight
+# on slow D-Bus; the SSH client applies PROVISION_PHASE_B_SSH_TIMEOUT_MS.
+systemctl daemon-reload
+echo "=== provision: systemd_enable ==="
+systemctl --no-pager enable "\${SERVICE}"
 
 echo "=== provision: install_service_done ==="
 `
@@ -469,11 +514,18 @@ async function logSshStep(instanceId: string, step: SshStepResult): Promise<void
   })
 }
 
+/**
+ * Best-effort remote snapshots after a failed provision. Log level matches
+ * command exit: success is `info` so triage is not swamped with false "errors".
+ * When `failedStage` is `installing_service`, Caddy journal/status are
+ * included first.
+ */
 async function collectDiagnostics(
   target: SshTarget,
   instanceId: string,
+  opts: { failedStage: VpsStage },
 ): Promise<void> {
-  const commands: [string, string][] = [
+  const baseCommands: [string, string][] = [
     [`journalctl -u ${OPENCLAW_SERVICE_NAME} --no-pager -n 200`, "journal"],
     ["dmesg -T 2>/dev/null | tail -40 || true", "kernel_tail"],
     [`systemctl status ${OPENCLAW_SERVICE_NAME} --no-pager`, "service_status"],
@@ -482,12 +534,26 @@ async function collectDiagnostics(
     ["which openclaw 2>/dev/null || echo 'not found'", "binary_path"],
     ["node -v 2>/dev/null || echo 'node not found'", "node_version"],
   ]
+  const caddyWhenInstalling: [string, string][] =
+    opts.failedStage === "installing_service"
+      ? [
+          ["journalctl -u caddy --no-pager -n 200", "caddy_journal"],
+          ["systemctl status caddy --no-pager 2>&1", "caddy_status"],
+        ]
+      : []
+  const commands: [string, string][] = [...caddyWhenInstalling, ...baseCommands]
+
   for (const [cmd, label] of commands) {
     try {
       const result = await sshRun(target, cmd)
+      const ok = result.code === 0
+      const level = ok ? "info" : "error"
+      const suffix = ok
+        ? " (ok)"
+        : ` (exit ${result.code ?? "unknown"})`
       await logInstanceEvent({
         instanceId,
-        level: "error",
+        level,
         stage: "diagnostics",
         action: label,
         detail: {
@@ -495,7 +561,7 @@ async function collectDiagnostics(
           stderr: result.stderr.slice(0, 4000),
           code: result.code,
         },
-        message: `Diagnostic [${label}]`,
+        message: `Diagnostic [${label}]${suffix}`,
       })
     } catch {
       await logInstanceEvent({
@@ -772,7 +838,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       buildPhaseInstallService({ caddyB64, unitB64 }),
       currentStage,
       "provision:phaseB (caddy, systemd)",
-      { timeoutMs: 90_000 },
+      { timeoutMs: PROVISION_PHASE_B_SSH_TIMEOUT_MS },
     )
     await logSshStep(instance.id, phaseBStep)
     if (phaseBStep.exitCode !== 0 && phaseBStep.exitCode !== null) {
@@ -883,7 +949,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
   } catch (err) {
     if (ipAddress) {
       try {
-        await collectDiagnostics({ host: ipAddress }, instance.id)
+        await collectDiagnostics({ host: ipAddress }, instance.id, { failedStage: currentStage })
       } catch {
         // diagnostics collection itself failed — don't mask the original error
       }

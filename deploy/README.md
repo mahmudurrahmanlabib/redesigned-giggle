@@ -120,6 +120,36 @@ Provisioning can upsert **proxied DNS** for each instance via the Cloudflare API
 
 Pin **`OPENCLAW_VERSION`** in `.env` to a semver you have tested so VPS bootstrap does not pull breaking CLI changes from `latest`.
 
+## When instance (VPS) provisioning fails
+
+Provisioning runs over SSH in ordered **stages** (see `src/lib/provisioner.ts`): VM create → boot → bootstrap (Node, Caddy, OpenClaw) → **writing_config** (Phase A) → **installing_service** (Phase B: Caddyfile, `caddy validate`, Caddy active, systemd unit, `daemon-reload`, `enable`) → **starting_service** → **health_check** → commit.
+
+### Preserving a failed VM for debugging
+
+Set **`KEEP_FAILED_VMS=true`** in the app environment. On failure, the provisioner will **not** delete the Linode VM so you can SSH in and inspect logs. Remove the variable or set it to `false` for normal operation (failed VMs are deleted to avoid cost).
+
+### Reading instance logs and exit codes
+
+- **Stdout markers** in Phase B look like `=== provision: caddy_validate ===`, `=== provision: systemd_daemon_reload ===`, and so on. The **last marker printed** before a failure localizes the step (e.g. still at `caddy_wait_active` vs `systemd_daemon_reload`).
+- **Exit 124** on the **remote** script usually means **GNU `timeout`** killed a subprocess. Phase B no longer wraps `systemctl daemon-reload` / `enable` in a short `timeout`; a remaining 124 is more likely from **`caddy validate`** (still wrapped with a bounded `timeout` so bad configs fail fast) or a different environment quirk. **Exit 1** with `caddy did not reach active` points at Caddy, not the systemd `timeout` class.
+- After failure, the app may log **diagnostic** lines. Lines ending **`(ok)`** are successful snapshots; only **`SSH unreachable`** means the check did not run.
+
+### Confirming slow `systemd` on the host
+
+If you kept the VM, SSH in as root and measure:
+
+```bash
+time systemctl daemon-reload
+time systemctl status caddy --no-pager
+journalctl -u caddy --no-pager -n 100
+```
+
+If `daemon-reload` is consistently fast (under a few seconds) but provision still failed earlier, triage Caddy and journal output instead of only systemd slowness.
+
+### Re-testing after a fix
+
+Re-run a full provision (smallest or slowest plan is a good stress test) and confirm the instance reaches `running`. If Phase B still fails, use the last **echo** line in the provision log, preserved VM + commands above, and Caddy journal diagnostics from the failed run.
+
 ## Troubleshooting
 
 - **`[pm2 guard] Refusing to start: ... these files exist`** — you have
