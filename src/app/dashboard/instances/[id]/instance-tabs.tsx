@@ -23,6 +23,9 @@ type InstanceLite = {
   hasRootPassword: boolean
   hasGatewayToken: boolean
   deploymentTarget: string | null
+  provisionStage: string | null
+  /** Server-derived seconds since instance creation; avoids client clock skew vs log timestamps */
+  provisioningElapsedSec: number | null
 }
 
 type LogLite = { id: string; level: string; message: string; createdAt: string }
@@ -33,6 +36,8 @@ type StatusPayload = {
   dnsStatus: string | null
   tlsStatus: string | null
   managedSubdomain: string | null
+  provisionStage: string | null
+  provisioningElapsedSec: number | null
   logs: LogLite[]
 }
 
@@ -50,6 +55,10 @@ function useInstancePolling(initialInstance: InstanceLite, initialLogs: LogLite[
   const [dnsStatus, setDnsStatus] = useState(initialInstance.dnsStatus)
   const [tlsStatus, setTlsStatus] = useState(initialInstance.tlsStatus)
   const [managedSubdomain, setManagedSubdomain] = useState(initialInstance.managedSubdomain)
+  const [provisionStage, setProvisionStage] = useState(initialInstance.provisionStage)
+  const [provisioningElapsedSec, setProvisioningElapsedSec] = useState(
+    initialInstance.provisioningElapsedSec,
+  )
   const [logs, setLogs] = useState(initialLogs)
   const router = useRouter()
   const prevStatus = useRef(initialInstance.status)
@@ -57,6 +66,11 @@ function useInstancePolling(initialInstance: InstanceLite, initialLogs: LogLite[
   useEffect(() => {
     setManagedSubdomain(initialInstance.managedSubdomain)
   }, [initialInstance.managedSubdomain])
+
+  useEffect(() => {
+    setProvisionStage(initialInstance.provisionStage)
+    setProvisioningElapsedSec(initialInstance.provisioningElapsedSec)
+  }, [initialInstance.provisionStage, initialInstance.provisioningElapsedSec])
 
   // Poll while the row is moving through any non-terminal transition state.
   const isPolling =
@@ -77,6 +91,8 @@ function useInstancePolling(initialInstance: InstanceLite, initialLogs: LogLite[
         setDnsStatus(data.dnsStatus)
         setTlsStatus(data.tlsStatus)
         setManagedSubdomain(data.managedSubdomain)
+        setProvisionStage(data.provisionStage ?? null)
+        setProvisioningElapsedSec(data.provisioningElapsedSec ?? null)
         setLogs(data.logs)
 
         const wasTransient =
@@ -96,11 +112,11 @@ function useInstancePolling(initialInstance: InstanceLite, initialLogs: LogLite[
         /* network error — retry next interval */
       }
       if (!cancelled) {
-        timer = setTimeout(poll, 3_000)
+        timer = setTimeout(poll, 2_000)
       }
     }
 
-    timer = setTimeout(poll, 1_500)
+    timer = setTimeout(poll, 1_000)
     return () => {
       cancelled = true
       if (timer) clearTimeout(timer)
@@ -115,6 +131,8 @@ function useInstancePolling(initialInstance: InstanceLite, initialLogs: LogLite[
       dnsStatus,
       tlsStatus,
       managedSubdomain,
+      provisionStage,
+      provisioningElapsedSec,
     },
     logs,
   }
@@ -547,21 +565,57 @@ const PROVISION_STEPS = [
   { match: "Mock-provisioned", label: "Provisioned" },
 ] as const
 
-function useElapsedTimer(startTime: string | null, active: boolean) {
-  const [elapsed, setElapsed] = useState("")
+/** Matches `VpsStage` in provisioner — shown under the checklist while a stage runs */
+const PROVISION_STAGE_HINTS: Record<string, string> = {
+  create_vm: "Creating your VM in the cloud region you selected.",
+  wait_boot: "Waiting for the provider to finish boot — disks and networking are coming up.",
+  waiting_ssh: "Waiting for SSH. Cloud-init may still be running on the server.",
+  bootstrap:
+    "Installing Node.js, OpenClaw, and Caddy. This step often takes 5–20 minutes (npm downloads and native builds are slow on smaller plans). You can leave this page open — work continues in the background.",
+  writing_config: "Writing OpenClaw configuration and preparing the reverse proxy.",
+  installing_service: "Installing the systemd unit for the OpenClaw gateway.",
+  starting_service: "Starting the OpenClaw gateway process.",
+  health_check: "Checking that the gateway port is listening.",
+  commit: "Finalizing deployment state.",
+}
+
+function formatProvisioningElapsed(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds))
+  const m = Math.floor(s / 60)
+  const h = Math.floor(m / 60)
+  if (h > 0) return `${h}h ${m % 60}m`
+  if (m > 0) return `${m}m ${s % 60}s`
+  return `${s}s`
+}
+
+/** Elapsed time driven by server clock (status poll); smooths with local 1s ticks between polls. */
+function useSmoothedProvisioningElapsed(active: boolean, serverSeconds: number | null) {
+  const [anchor, setAnchor] = useState<{ sec: number; at: number } | null>(null)
+
   useEffect(() => {
-    if (!active || !startTime) return
-    const start = new Date(startTime).getTime()
+    if (!active || serverSeconds == null) {
+      setAnchor(null)
+      return
+    }
+    setAnchor({ sec: serverSeconds, at: Date.now() })
+  }, [active, serverSeconds])
+
+  const [label, setLabel] = useState("")
+  useEffect(() => {
+    if (!active || !anchor) {
+      setLabel("")
+      return
+    }
     const tick = () => {
-      const s = Math.floor((Date.now() - start) / 1000)
-      const m = Math.floor(s / 60)
-      setElapsed(m > 0 ? `${m}m ${s % 60}s` : `${s}s`)
+      const t = anchor.sec + Math.floor((Date.now() - anchor.at) / 1000)
+      setLabel(formatProvisioningElapsed(t))
     }
     tick()
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
-  }, [startTime, active])
-  return elapsed
+  }, [active, anchor])
+
+  return label
 }
 
 function ProvisioningCard({ instance, logs }: { instance: InstanceLite; logs: LogLite[] }) {
@@ -570,9 +624,14 @@ function ProvisioningCard({ instance, logs }: { instance: InstanceLite; logs: Lo
   const isRunning = instance.status === "running"
   const isActive = !isFailed && !isRunning
 
-  const earliestLog = logs.length > 0 ? logs[logs.length - 1]?.createdAt : null
-  const startTime = earliestLog ?? instance.createdAt
-  const elapsed = useElapsedTimer(startTime, isActive)
+  const elapsed = useSmoothedProvisioningElapsed(isActive, instance.provisioningElapsedSec)
+
+  const stageHint =
+    isActive &&
+    (instance.provisionStage
+      ? PROVISION_STAGE_HINTS[instance.provisionStage] ??
+        "Still working — safe to leave this page open."
+      : "Provisioning is starting. First-time setup usually takes several minutes.")
 
   const steps = PROVISION_STEPS.filter((s) =>
     logMessages.some((m) => m.includes(s.match))
@@ -623,6 +682,11 @@ function ProvisioningCard({ instance, logs }: { instance: InstanceLite; logs: Lo
         {isRunning && (
           <p className="text-xs font-mono text-[var(--accent-color)] mt-2">
             Agent is live and ready to accept requests.
+          </p>
+        )}
+        {isActive && stageHint && (
+          <p className="text-xs text-[var(--text-secondary)] leading-relaxed border-t border-[var(--border-color)] pt-3 mt-1">
+            {stageHint}
           </p>
         )}
       </div>
