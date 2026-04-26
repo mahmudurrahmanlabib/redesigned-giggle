@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react"
 import { useRouter, usePathname } from "next/navigation"
+import { buildPublicGatewayUrl } from "@/lib/instance-gateway-access"
 
 type InstanceLite = {
   id: string
@@ -14,6 +15,7 @@ type InstanceLite = {
   ramGb: number
   createdAt: string
   domain: string | null
+  managedSubdomain: string | null
   dnsStatus: string | null
   tlsStatus: string | null
   openclawAdminEmail: string | null
@@ -30,6 +32,7 @@ type StatusPayload = {
   ipAddress: string | null
   dnsStatus: string | null
   tlsStatus: string | null
+  managedSubdomain: string | null
   logs: LogLite[]
 }
 
@@ -41,14 +44,19 @@ const TABS = [
   { id: "danger", label: "Danger Zone" },
 ] as const
 
-function useInstancePolling(instance: InstanceLite, initialLogs: LogLite[]) {
-  const [status, setStatus] = useState(instance.status)
-  const [ipAddress, setIpAddress] = useState(instance.ipAddress)
-  const [dnsStatus, setDnsStatus] = useState(instance.dnsStatus)
-  const [tlsStatus, setTlsStatus] = useState(instance.tlsStatus)
+function useInstancePolling(initialInstance: InstanceLite, initialLogs: LogLite[]) {
+  const [status, setStatus] = useState(initialInstance.status)
+  const [ipAddress, setIpAddress] = useState(initialInstance.ipAddress)
+  const [dnsStatus, setDnsStatus] = useState(initialInstance.dnsStatus)
+  const [tlsStatus, setTlsStatus] = useState(initialInstance.tlsStatus)
+  const [managedSubdomain, setManagedSubdomain] = useState(initialInstance.managedSubdomain)
   const [logs, setLogs] = useState(initialLogs)
   const router = useRouter()
-  const prevStatus = useRef(instance.status)
+  const prevStatus = useRef(initialInstance.status)
+
+  useEffect(() => {
+    setManagedSubdomain(initialInstance.managedSubdomain)
+  }, [initialInstance.managedSubdomain])
 
   // Poll while the row is moving through any non-terminal transition state.
   const isPolling =
@@ -61,13 +69,14 @@ function useInstancePolling(instance: InstanceLite, initialLogs: LogLite[]) {
 
     async function poll() {
       try {
-        const r = await fetch(`/api/instances/${instance.id}/status`, { cache: "no-store" })
+        const r = await fetch(`/api/instances/${initialInstance.id}/status`, { cache: "no-store" })
         if (!r.ok || cancelled) return
         const data: StatusPayload = await r.json()
         setStatus(data.status)
         setIpAddress(data.ipAddress)
         setDnsStatus(data.dnsStatus)
         setTlsStatus(data.tlsStatus)
+        setManagedSubdomain(data.managedSubdomain)
         setLogs(data.logs)
 
         const wasTransient =
@@ -96,10 +105,17 @@ function useInstancePolling(instance: InstanceLite, initialLogs: LogLite[]) {
       cancelled = true
       if (timer) clearTimeout(timer)
     }
-  }, [instance.id, isPolling, router])
+  }, [initialInstance.id, isPolling, router])
 
   return {
-    instance: { ...instance, status, ipAddress, dnsStatus, tlsStatus },
+    instance: {
+      ...initialInstance,
+      status,
+      ipAddress,
+      dnsStatus,
+      tlsStatus,
+      managedSubdomain,
+    },
     logs,
   }
 }
@@ -285,14 +301,71 @@ function DnsCard({ instance }: { instance: InstanceLite }) {
   )
 }
 
+/* ───────────── MANAGED HOSTNAME (CLOUDFLARE) ───────────── */
+function ManagedHostnameCard({ instance }: { instance: InstanceLite }) {
+  const url = buildPublicGatewayUrl({
+    domain: null,
+    managedSubdomain: instance.managedSubdomain,
+    tlsStatus: null,
+    ipAddress: instance.ipAddress,
+  })?.url
+  const [copied, setCopied] = useState(false)
+
+  async function copyUrl() {
+    if (!url) return
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (!instance.managedSubdomain || instance.domain || !url) return null
+
+  return (
+    <Card title="Managed hostname">
+      <p className="text-sm text-[var(--text-secondary)] mb-2">
+        DNS for this hostname is managed automatically. Open the gateway over HTTPS:
+      </p>
+      <div className="font-mono text-sm bg-[var(--code-bg)] border border-[var(--border-color)] p-3 flex items-center justify-between gap-3 flex-wrap">
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="text-[var(--accent-color)] underline break-all"
+        >
+          {url}
+        </a>
+        <button
+          type="button"
+          onClick={copyUrl}
+          className="px-2 py-1 text-[10px] uppercase tracking-[0.08em] border border-[var(--border-color)] text-[var(--text-primary)] hover:border-[var(--accent-color)] shrink-0"
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <p className="text-[10px] font-mono text-[var(--text-secondary)]/70 mt-2">
+        Direct <span className="text-[var(--text-primary)]">http://{instance.ipAddress ?? "IP"}</span> on port 80
+        still reaches the gateway when the VM firewall allows it.
+      </p>
+    </Card>
+  )
+}
+
 /* ───────────── CREDENTIALS CARD ───────────── */
 function CredentialsCard({
   instanceId,
   domain,
+  managedSubdomain,
+  tlsStatus,
   ipAddress,
 }: {
   instanceId: string
   domain: string | null
+  managedSubdomain: string | null
+  tlsStatus: string | null
   ipAddress: string | null
 }) {
   const [revealed, setRevealed] = useState<{ email: string; password: string; loginUrl: string | null } | null>(null)
@@ -323,7 +396,10 @@ function CredentialsCard({
     }
   }
 
-  const loginUrl = revealed?.loginUrl ?? (domain ? `https://${domain}` : ipAddress ? `http://${ipAddress}` : null)
+  const loginUrl =
+    revealed?.loginUrl ??
+    buildPublicGatewayUrl({ domain, managedSubdomain, tlsStatus, ipAddress })?.url ??
+    null
 
   return (
     <Card title="Admin Credentials">
@@ -566,10 +642,15 @@ function OverviewTab({ instance, logs }: { instance: InstanceLite; logs: LogLite
       )}
       {/* DNS card only renders when a domain is explicitly configured. */}
       {instance.domain && instance.status === "running" && <DnsCard instance={instance} />}
+      {instance.managedSubdomain && !instance.domain && instance.status === "running" && (
+        <ManagedHostnameCard instance={instance} />
+      )}
       {instance.hasOpenclawPassword && instance.status === "running" && (
         <CredentialsCard
           instanceId={instance.id}
           domain={instance.domain}
+          managedSubdomain={instance.managedSubdomain}
+          tlsStatus={instance.tlsStatus}
           ipAddress={instance.ipAddress}
         />
       )}
@@ -581,10 +662,16 @@ function OverviewTab({ instance, logs }: { instance: InstanceLite; logs: LogLite
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Stat label="Status" value={instance.status} />
           <Stat label="IP" value={instance.ipAddress || "—"} />
-          <Stat label="Domain" value={instance.domain || "—"} />
+          <Stat label="Domain" value={instance.domain ?? instance.managedSubdomain ?? "—"} />
           <Stat
             label="TLS"
-            value={instance.domain ? instance.tlsStatus ?? "pending" : "—"}
+            value={
+              instance.domain
+                ? instance.tlsStatus ?? "pending"
+                : instance.managedSubdomain
+                  ? "Cloudflare"
+                  : "—"
+            }
           />
         </div>
       </Card>
@@ -813,7 +900,9 @@ function DomainManageCard({
       <p className="text-xs text-[var(--text-secondary)] mb-2">
         {instance.domain
           ? `Currently configured: ${instance.domain}`
-          : "No custom domain. Access via IP only."}
+          : instance.managedSubdomain
+            ? `No custom domain yet. HTTPS hostname: ${instance.managedSubdomain}`
+            : "No custom domain. Access via IP only."}
       </p>
       <div className="flex gap-2">
         <input
@@ -842,11 +931,12 @@ function DomainManageCard({
 
 /* ───────────── INTERFACES ───────────── */
 function InterfacesTab({ instance }: { instance: InstanceLite }) {
-  const webUrl = instance.domain
-    ? `${instance.tlsStatus === "issued" ? "https" : "http"}://${instance.domain}`
-    : instance.ipAddress
-    ? `http://${instance.ipAddress}`
-    : null
+  const webUrl = buildPublicGatewayUrl({
+    domain: instance.domain,
+    managedSubdomain: instance.managedSubdomain,
+    tlsStatus: instance.tlsStatus,
+    ipAddress: instance.ipAddress,
+  })?.url
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <Card title="Web">

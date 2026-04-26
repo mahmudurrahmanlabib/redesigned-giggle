@@ -3,7 +3,12 @@ import { auth } from "@/auth"
 import { db, instances, eq } from "@/db"
 import { whereUserInstanceVisible } from "@/lib/instance-queries"
 import { sshInstallCaddyfile, sshRun } from "@/lib/ssh"
-import { renderCaddyfile, OPENCLAW_SERVICE_NAME } from "@/lib/openclaw"
+import {
+  hasCloudflareOriginCertEnv,
+  OPENCLAW_SERVICE_NAME,
+  renderCaddyfile,
+} from "@/lib/openclaw"
+import { buildGatewayAllowedOrigins } from "@/lib/instance-gateway-access"
 
 export async function POST(
   req: NextRequest,
@@ -42,18 +47,43 @@ export async function POST(
   const target = { host: instance.ipAddress }
 
   try {
-    const caddyContent = renderCaddyfile({ domain })
-    await sshInstallCaddyfile(target, caddyContent)
+    const caddyContent = renderCaddyfile({
+      domain,
+      managedSubdomain: instance.managedSubdomain,
+      useCfOriginTls: hasCloudflareOriginCertEnv(),
+    })
+    const caddyResult = await sshInstallCaddyfile(target, caddyContent)
+    if (caddyResult.code !== 0 && caddyResult.code !== null) {
+      throw new Error(
+        `Caddy reload failed (exit ${caddyResult.code}): ${caddyResult.stderr || caddyResult.stdout}`,
+      )
+    }
 
-    const allowedOrigin = domain
-      ? `https://${domain}`
-      : `http://${instance.ipAddress}`
+    const allowedOrigins = buildGatewayAllowedOrigins({
+      domain,
+      managedSubdomain: instance.managedSubdomain,
+      ipAddress: instance.ipAddress,
+      tlsStatus: domain ? (instance.tlsStatus ?? "pending") : null,
+    })
     const OPENCLAW_DIR = "/opt/openclaw"
-    await sshRun(
+    const originStep = await sshRun(
       target,
-      `sudo -u openclaw HOME=${OPENCLAW_DIR} /usr/bin/openclaw config set gateway.controlUi.allowedOrigins '${JSON.stringify([allowedOrigin])}' 2>&1`,
+      `sudo -u openclaw HOME=${OPENCLAW_DIR} /usr/bin/openclaw config set gateway.controlUi.allowedOrigins '${JSON.stringify(allowedOrigins)}' 2>&1`,
     )
-    await sshRun(target, `systemctl restart ${OPENCLAW_SERVICE_NAME} 2>&1 || true`)
+    if (originStep.code !== 0 && originStep.code !== null) {
+      throw new Error(
+        `openclaw config set allowedOrigins failed (exit ${originStep.code}): ${originStep.stderr || originStep.stdout}`,
+      )
+    }
+    const restartStep = await sshRun(
+      target,
+      `systemctl restart ${OPENCLAW_SERVICE_NAME} 2>&1`,
+    )
+    if (restartStep.code !== 0 && restartStep.code !== null) {
+      throw new Error(
+        `systemctl restart ${OPENCLAW_SERVICE_NAME} failed (exit ${restartStep.code}): ${restartStep.stderr || restartStep.stdout}`,
+      )
+    }
   } catch (err) {
     return NextResponse.json(
       { error: `Failed to update Caddy config: ${err instanceof Error ? err.message : String(err)}` },

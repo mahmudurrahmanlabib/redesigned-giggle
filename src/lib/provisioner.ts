@@ -26,6 +26,7 @@ import {
   buildOpenclawEnv,
   generateAdminPassword,
   generateGatewayToken,
+  hasCloudflareOriginCertEnv,
   OPENCLAW_GATEWAY_PORT,
   OPENCLAW_SERVICE_NAME,
   OPENCLAW_VERSION,
@@ -35,6 +36,7 @@ import {
   renderOpenclawConfig,
   renderSystemdUnit,
 } from "@/lib/openclaw"
+import { buildGatewayAllowedOrigins } from "@/lib/instance-gateway-access"
 import { getVmProvider, describeVmError } from "@/lib/vm-provider"
 import { createAgentSubdomain, deleteAgentSubdomain } from "@/lib/agent-dns"
 import { generateMockIp } from "@/lib/instance"
@@ -427,6 +429,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     }
 
     /* --- 2b. Cloudflare managed subdomain --------------------------- */
+    let managedSubdomainForProvision: string | null = instance.managedSubdomain ?? null
     if (process.env.CLOUDFLARE_API_TOKEN && process.env.CLOUDFLARE_ZONE_ID) {
       try {
         const { name, recordId } = await createAgentSubdomain(
@@ -434,6 +437,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
           ipAddress,
           instance.name,
         )
+        managedSubdomainForProvision = name
         await db
           .update(instances)
           .set({
@@ -550,9 +554,12 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     }
 
     /* --- 8. Overlay settings via openclaw config set ----------------- */
-    const allowedOrigin = instance.domain
-      ? `https://${instance.domain}`
-      : `http://${ipAddress}`
+    const allowedOrigins = buildGatewayAllowedOrigins({
+      domain: instance.domain,
+      managedSubdomain: managedSubdomainForProvision,
+      ipAddress,
+      tlsStatus: instance.domain ? instance.tlsStatus : null,
+    })
 
     const configCmds = [
       `openclaw config set gateway.port ${OPENCLAW_GATEWAY_PORT}`,
@@ -560,7 +567,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       `openclaw config set gateway.auth.token ${JSON.stringify(gatewayToken)}`,
       `openclaw config set gateway.remote.token ${JSON.stringify(gatewayToken)}`,
       `openclaw config set gateway.trustedProxies '["127.0.0.1"]'`,
-      `openclaw config set gateway.controlUi.allowedOrigins '${JSON.stringify([allowedOrigin])}'`,
+      `openclaw config set gateway.controlUi.allowedOrigins '${JSON.stringify(allowedOrigins)}'`,
       `openclaw config set gateway.controlUi.allowInsecureAuth true`,
       `openclaw config set gateway.controlUi.dangerouslyDisableDeviceAuth true`,
       `openclaw config set agents.defaults.model.primary ${JSON.stringify(route.model)}`,
@@ -589,14 +596,23 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     )
     await logSshStep(instance.id, configDump)
 
-    const caddyContent = renderCaddyfile({ domain: instance.domain })
+    const caddyContent = renderCaddyfile({
+      domain: instance.domain,
+      managedSubdomain: managedSubdomainForProvision,
+      useCfOriginTls: hasCloudflareOriginCertEnv(),
+    })
     const caddyB64 = Buffer.from(caddyContent, "utf8").toString("base64")
     const caddyStep = await sshRunLogged(
       target,
-      `echo '${caddyB64}' | base64 -d > /etc/caddy/Caddyfile && systemctl reload caddy 2>&1 || true`,
+      `echo '${caddyB64}' | base64 -d > /etc/caddy/Caddyfile && systemctl reload caddy`,
       currentStage,
     )
     await logSshStep(instance.id, caddyStep)
+    if (caddyStep.exitCode !== 0 && caddyStep.exitCode !== null) {
+      throw new Error(
+        `Caddy reload failed (exit ${caddyStep.exitCode}): ${caddyStep.stderr || caddyStep.stdout}`,
+      )
+    }
 
     /* --- 9. Systemd install ----------------------------------------- */
     currentStage = "installing_service"
@@ -1077,7 +1093,9 @@ export async function reprovisionBotEnv(instance: Instance): Promise<void> {
         model: route.model,
         fallbackModel: route.fallback,
         domain: instance.domain,
+        managedSubdomain: instance.managedSubdomain,
         ipAddress: instance.ipAddress,
+        tlsStatus: instance.tlsStatus,
         soulMd: instance.soulMd,
       }),
     )

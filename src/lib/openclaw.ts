@@ -1,6 +1,7 @@
 import crypto from "node:crypto"
 import type { InferSelectModel } from "drizzle-orm"
 import { instances } from "@/db"
+import { buildGatewayAllowedOrigins } from "@/lib/instance-gateway-access"
 import { routeModel } from "@/lib/model-router"
 
 type Instance = InferSelectModel<typeof instances>
@@ -72,14 +73,20 @@ export function renderOpenclawConfig(args: {
   model: string
   fallbackModel: string
   domain?: string | null
+  managedSubdomain?: string | null
   ipAddress?: string | null
+  tlsStatus?: string | null
   soulMd?: string | null
 }): string {
-  const allowedOrigin = args.domain
-    ? `https://${args.domain}`
-    : args.ipAddress
-      ? `http://${args.ipAddress}`
-      : `http://localhost:${OPENCLAW_GATEWAY_PORT}`
+  let allowedOrigins = buildGatewayAllowedOrigins({
+    domain: args.domain,
+    managedSubdomain: args.managedSubdomain,
+    ipAddress: args.ipAddress,
+    tlsStatus: args.domain ? args.tlsStatus : null,
+  })
+  if (allowedOrigins.length === 0) {
+    allowedOrigins = [`http://localhost:${OPENCLAW_GATEWAY_PORT}`]
+  }
 
   return `{
   gateway: {
@@ -93,7 +100,7 @@ export function renderOpenclawConfig(args: {
     },
     trustedProxies: ["127.0.0.1"],
     controlUi: {
-      allowedOrigins: [${JSON.stringify(allowedOrigin)}],
+      allowedOrigins: ${JSON.stringify(allowedOrigins)},
       dangerouslyDisableDeviceAuth: true,
     },
   },
@@ -123,23 +130,48 @@ export function renderOpenclawConfig(args: {
  *  - X-Forwarded-Proto (scheme so OpenClaw knows TLS terminated at proxy)
  *  - X-Forwarded-For / Authorization are passed by Caddy automatically
  */
-export function renderCaddyfile(args: { domain?: string | null }): string {
+export type RenderCaddyfileArgs = {
+  domain?: string | null
+  managedSubdomain?: string | null
+  /** When true, emit TLS for managed host using certs at /etc/caddy/cf/ (bootstrap). */
+  useCfOriginTls?: boolean
+}
+
+/** Matches VPS bootstrap when origin cert/key are installed under /etc/caddy/cf/. */
+export function hasCloudflareOriginCertEnv(): boolean {
+  return Boolean(process.env.CLOUDFLARE_ORIGIN_CERT_PEM && process.env.CLOUDFLARE_ORIGIN_CERT_KEY)
+}
+
+export function renderCaddyfile(args: RenderCaddyfileArgs): string {
   const upstreamBlock = `reverse_proxy localhost:${OPENCLAW_GATEWAY_PORT} {
     header_up Host {host}
     header_up X-Real-IP {remote_host}
     header_up X-Forwarded-Proto {scheme}
   }`
 
-  if (args.domain && args.domain.trim().length > 0) {
-    return `${args.domain} {
+  const domain = args.domain?.trim()
+  if (domain) {
+    return `${domain} {
   ${upstreamBlock}
 }
 `
   }
-  return `:80 {
+
+  const port80 = `:80 {
   ${upstreamBlock}
 }
 `
+  const managed = args.managedSubdomain?.trim()
+  if (managed && args.useCfOriginTls) {
+    return `${managed} {
+  tls /etc/caddy/cf/origin.pem /etc/caddy/cf/origin.key
+  ${upstreamBlock}
+}
+
+${port80}`
+  }
+
+  return port80
 }
 
 /**

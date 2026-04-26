@@ -3,6 +3,7 @@ import { auth } from "@/auth"
 import { db, instances, eq } from "@/db"
 import { whereUserInstanceVisible } from "@/lib/instance-queries"
 import { decryptSecret } from "@/lib/crypto-secret"
+import { buildPublicGatewayUrl } from "@/lib/instance-gateway-access"
 
 export async function GET(
   _req: NextRequest,
@@ -51,16 +52,19 @@ export async function GET(
     }
   }
 
+  const access = buildPublicGatewayUrl({
+    domain: instance.domain,
+    managedSubdomain: instance.managedSubdomain,
+    tlsStatus: instance.tlsStatus,
+    ipAddress: instance.ipAddress,
+  })
+
   return NextResponse.json({
     email: instance.openclawAdminEmail,
     password,
     rootPassword,
     sshCommand: instance.ipAddress ? `ssh root@${instance.ipAddress}` : null,
-    gatewayUrl: instance.ipAddress ? `http://${instance.ipAddress}` : null,
-    loginUrl: instance.domain
-      ? `https://${instance.domain}`
-      : instance.ipAddress
-      ? `http://${instance.ipAddress}`
-      : null,
+    gatewayUrl: access?.url ?? null,
+    loginUrl: access?.url ?? null,
   })
 }

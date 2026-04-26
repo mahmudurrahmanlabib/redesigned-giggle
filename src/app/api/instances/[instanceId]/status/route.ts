@@ -22,6 +22,7 @@ export async function GET(
       ipAddress: true,
       dnsStatus: true,
       tlsStatus: true,
+      managedSubdomain: true,
     },
   })
 
@@ -40,6 +41,7 @@ export async function GET(
     ipAddress: instance.ipAddress,
     dnsStatus: instance.dnsStatus,
     tlsStatus: instance.tlsStatus,
+    managedSubdomain: instance.managedSubdomain,
     logs: logs.map((l) => ({
       id: l.id,
       level: l.level,

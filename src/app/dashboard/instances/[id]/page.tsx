@@ -5,6 +5,7 @@ import { whereUserInstanceVisible } from "@/lib/instance-queries"
 import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
 import { InstanceTabs } from "./instance-tabs"
+import { buildPublicGatewayUrl } from "@/lib/instance-gateway-access"
 
 const STATUS_STYLES: Record<string, string> = {
   pending: "bg-amber-500/10 text-amber-400 border-amber-500/30",
@@ -14,25 +15,6 @@ const STATUS_STYLES: Record<string, string> = {
   failed_provisioning: "bg-red-500/10 text-red-400 border-red-500/30",
   deleting: "bg-zinc-800/20 text-zinc-400 border-zinc-800/30",
   deleted: "bg-[var(--card-bg)] text-[var(--text-secondary)]/50 border-[var(--border-color)]",
-}
-
-/**
- * Build the real access URL for an instance. Reflects what Caddy is actually
- * serving: HTTPS iff a domain exists and TLS is issued, otherwise HTTP on the
- * VM IP (Caddy listens on :80 without ACME when no domain is configured).
- * Returns null during provisioning or when no VM exists yet.
- */
-function buildAccessUrl(i: {
-  ipAddress: string | null
-  domain: string | null
-  tlsStatus: string | null
-}): { url: string; scheme: "https" | "http" } | null {
-  if (i.domain) {
-    const scheme = i.tlsStatus === "issued" ? "https" : "http"
-    return { url: `${scheme}://${i.domain}`, scheme }
-  }
-  if (i.ipAddress) return { url: `http://${i.ipAddress}`, scheme: "http" }
-  return null
 }
 
 export default async function InstanceDetailPage({
@@ -62,9 +44,10 @@ export default async function InstanceDetailPage({
 
   if (!instance) notFound()
 
-  const access = buildAccessUrl({
+  const access = buildPublicGatewayUrl({
     ipAddress: instance.ipAddress,
     domain: instance.domain,
+    managedSubdomain: instance.managedSubdomain,
     tlsStatus: instance.tlsStatus,
   })
 
@@ -114,14 +97,21 @@ export default async function InstanceDetailPage({
                 TLS certificate pending — accessed over HTTP until Let&apos;s Encrypt completes.
               </p>
             )}
-            {access.scheme === "http" && !instance.domain && (
+            {access.scheme === "http" && !instance.domain && !instance.managedSubdomain && (
               <p className="text-xs text-[var(--text-secondary)] mt-2">
-                Raw IP access over HTTP. Configure a domain to enable HTTPS.
+                Raw IP access over HTTP. A managed hostname or custom domain enables HTTPS.
               </p>
             )}
-            {access.scheme === "https" && (
+            {access.scheme === "https" && instance.domain && (
               <p className="text-xs text-[var(--text-secondary)] mt-2">
-                Served with Let&apos;s Encrypt certificate.
+                {instance.tlsStatus === "issued"
+                  ? "Served with Let&apos;s Encrypt certificate."
+                  : "TLS certificate pending — check DNS for your custom domain."}
+              </p>
+            )}
+            {access.scheme === "https" && instance.managedSubdomain && !instance.domain && (
+              <p className="text-xs text-[var(--text-secondary)] mt-2">
+                HTTPS via Cloudflare to your agent hostname. Direct IP access may use HTTP on port 80.
               </p>
             )}
           </>
@@ -145,6 +135,7 @@ export default async function InstanceDetailPage({
           ramGb: instance.serverConfig.ramGb,
           createdAt: instance.createdAt.toISOString(),
           domain: instance.domain,
+          managedSubdomain: instance.managedSubdomain,
           dnsStatus: instance.dnsStatus,
           tlsStatus: instance.tlsStatus,
           openclawAdminEmail: instance.openclawAdminEmail,
