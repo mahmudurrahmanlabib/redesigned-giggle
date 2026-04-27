@@ -665,25 +665,24 @@ function formatProvisioningElapsed(totalSeconds: number): string {
 }
 
 /**
- * Elapsed time anchored to the instance's `createdAt` and ticked locally.
+ * Elapsed time computed from `createdAt` and ticked locally every second.
  *
- * Prior implementation re-anchored to the server's poll value every 2s, which
- * could snap backward on poll latency / clock skew and looked like the timer
- * "reset" at each provisioning step. Anchoring once to `createdAt` makes the
- * displayed elapsed strictly monotonic from the moment the instance was
- * created until provisioning completes, regardless of how many stages run.
+ * Uses the instance's immutable `createdAt` timestamp — never null, never
+ * changes — so the timer is strictly monotonic and immune to polling
+ * jitter or transient null values from the status API.
  */
-function useSmoothedProvisioningElapsed(active: boolean, createdAt: string) {
+function useProvisioningElapsed(active: boolean, createdAt: string) {
   const [label, setLabel] = useState("")
+  const startMs = useMemo(() => new Date(createdAt).getTime(), [createdAt])
+
   useEffect(() => {
     if (!active) {
       setLabel("")
       return
     }
-    const start = new Date(createdAt).getTime()
     const tick = () => {
-      const t = Math.max(0, Math.floor((Date.now() - start) / 1000))
-      setLabel(formatProvisioningElapsed(t))
+      const elapsed = Math.max(0, Math.floor((Date.now() - startMs) / 1000))
+      setLabel(formatProvisioningElapsed(elapsed))
     }
     tick()
     const id = setInterval(tick, 1000)
@@ -695,7 +694,7 @@ function useSmoothedProvisioningElapsed(active: boolean, createdAt: string) {
       clearInterval(id)
       document.removeEventListener("visibilitychange", onVisible)
     }
-  }, [active, createdAt])
+  }, [active, startMs])
   return label
 }
 
@@ -705,7 +704,7 @@ function ProvisioningCard({ instance, logs }: { instance: InstanceLite; logs: Lo
   const isRunning = instance.status === "running"
   const isActive = !isFailed && !isRunning
 
-  const elapsed = useSmoothedProvisioningElapsed(isActive, instance.createdAt)
+  const elapsed = useProvisioningElapsed(isActive, instance.createdAt)
 
   const stageHint =
     isActive &&

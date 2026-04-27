@@ -44,6 +44,7 @@ export function buildOpenclawEnv(args: {
   const route = routeModel(tier)
 
   const env: OpenclawEnv = {
+    PORT: String(OPENCLAW_GATEWAY_PORT),
     DOMAIN: args.instance.domain ?? "",
     OPENROUTER_API_KEY: args.openRouterApiKey,
     OPENCLAW_ADMIN_EMAIL: args.adminEmail,
@@ -88,36 +89,31 @@ export function renderOpenclawConfig(args: {
     allowedOrigins = [`http://localhost:${OPENCLAW_GATEWAY_PORT}`]
   }
 
-  return `{
-  gateway: {
-    port: ${OPENCLAW_GATEWAY_PORT},
-    bind: "loopback",
-    disabledPlugins: ["bonjour", "device-pair", "phone-control", "browser"],
-    auth: {
-      token: ${JSON.stringify(args.gatewayToken)},
-    },
-    remote: {
-      token: ${JSON.stringify(args.gatewayToken)},
-    },
-    trustedProxies: ["127.0.0.1"],
-    controlUi: {
-      allowedOrigins: ${JSON.stringify(allowedOrigins)},
-      dangerouslyDisableDeviceAuth: true,
-    },
-  },
-  agents: {
-    defaults: {
-      model: {
-        primary: ${JSON.stringify(args.model)},
-        fallbacks: [${JSON.stringify(args.fallbackModel)}],
+  const config = {
+    gateway: {
+      port: OPENCLAW_GATEWAY_PORT,
+      bind: "loopback",
+      disabledPlugins: ["bonjour", "device-pair", "phone-control", "browser"],
+      auth: { token: args.gatewayToken },
+      remote: { token: args.gatewayToken },
+      trustedProxies: ["127.0.0.1"],
+      controlUi: {
+        allowedOrigins,
+        dangerouslyDisableDeviceAuth: true,
       },
     },
-    list: [
-      { id: "main" },
-    ],
-  },
-}
-`
+    agents: {
+      defaults: {
+        model: {
+          primary: args.model,
+          fallbacks: [args.fallbackModel],
+        },
+      },
+      list: [{ id: "main" }],
+    },
+  }
+
+  return JSON.stringify(config, null, 2) + "\n"
 }
 
 /**
@@ -201,7 +197,7 @@ EnvironmentFile=/opt/openclaw/.env
 Environment=NODE_COMPILE_CACHE=/var/tmp/openclaw-compile-cache
 Environment=OPENCLAW_NO_RESPAWN=1
 Environment=HOME=/opt/openclaw
-ExecStart=/usr/bin/openclaw gateway --allow-unconfigured
+ExecStart=/usr/bin/openclaw gateway --config /opt/openclaw/.openclaw/openclaw.json
 Restart=always
 RestartSec=2
 TimeoutStartSec=90

@@ -103,6 +103,10 @@ const PROVISION_INSTALL_START_SSH_TIMEOUT_MS = 180_000
  * Merged Phase B+C+D — install Caddy + systemd, start service, wait for
  * gateway port. Runs in a single SSH session to eliminate connect/auth
  * overhead (~6-9s saved).
+ *
+ * Phase C+D are wrapped in a retry loop (up to MAX_CD_RETRIES). If the
+ * service crashes during the health check, the script restarts the service
+ * and re-runs health checks before giving up.
  */
 function buildPhaseInstallAndStart(opts: { caddyB64: string; unitB64: string }): string {
   return `#!/bin/bash
@@ -110,6 +114,7 @@ set -uo pipefail
 export SYSTEMD_PAGER=cat
 SERVICE=${bashSingleQuoteForScript(OPENCLAW_SERVICE_NAME)}
 PORT=${bashSingleQuoteForScript(String(OPENCLAW_GATEWAY_PORT))}
+MAX_CD_RETRIES=2
 
 # --- Phase B: Caddy + systemd ---
 echo "=== provision: caddyfile_write ==="
@@ -151,58 +156,88 @@ echo "=== provision: systemd_enable ==="
 systemctl --no-pager enable "\${SERVICE}"
 echo "=== provision: install_service_done ==="
 
-# --- Phase C: start service ---
-echo "=== provision: start ==="
-timeout 30s systemctl start "\${SERVICE}" || true
-
-echo "=== provision: wait_active ==="
-ACTIVE_OK=0
-for _ in \$(seq 1 30); do
-  if systemctl is-active --quiet "\${SERVICE}"; then
-    ACTIVE_OK=1
-    break
-  fi
+# --- Phase C+D with retry ---
+try_start_and_health() {
+  echo "=== provision: start ==="
+  systemctl stop "\${SERVICE}" 2>/dev/null || true
   sleep 1
-done
-if [ "\${ACTIVE_OK}" != "1" ]; then
-  systemctl is-active "\${SERVICE}" || true
-  journalctl -u "\${SERVICE}" --no-pager -n 40
-  exit 1
-fi
-echo "=== provision: start_service_done ==="
+  timeout 30s systemctl start "\${SERVICE}" || true
 
-# --- Phase D: health check ---
-echo "=== provision: wait_port ==="
-PORT_OK=0
-for _ in \$(seq 1 90); do
-  if ss -tlnp 2>/dev/null | grep -q ":\${PORT}"; then
-    PORT_OK=1
-    break
+  echo "=== provision: wait_active ==="
+  local ACTIVE_OK=0
+  for _ in \$(seq 1 30); do
+    if systemctl is-active --quiet "\${SERVICE}"; then
+      ACTIVE_OK=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "\${ACTIVE_OK}" != "1" ]; then
+    echo "service did not reach active within 30s" >&2
+    systemctl is-active "\${SERVICE}" || true
+    journalctl -u "\${SERVICE}" --no-pager -n 40
+    return 1
   fi
-  sleep 1
-done
-if [ "\${PORT_OK}" != "1" ]; then
-  journalctl -u "\${SERVICE}" --no-pager -n 50
-  exit 1
-fi
+  echo "=== provision: start_service_done ==="
 
-echo "=== provision: http_health ==="
-HTTP_OK=0
-for _ in \$(seq 1 30); do
-  if curl -sf -o /dev/null -m 5 http://127.0.0.1:\${PORT}/; then
-    HTTP_OK=1
-    break
-  fi
-  if ! systemctl is-active --quiet "\${SERVICE}"; then
-    echo "service crashed during HTTP health check" >&2
+  echo "=== provision: wait_port ==="
+  local PORT_OK=0
+  for _ in \$(seq 1 90); do
+    if ss -tlnp 2>/dev/null | grep -q ":\${PORT}"; then
+      PORT_OK=1
+      break
+    fi
+    if ! systemctl is-active --quiet "\${SERVICE}"; then
+      echo "service crashed during port wait" >&2
+      journalctl -u "\${SERVICE}" --no-pager -n 50
+      return 1
+    fi
+    sleep 1
+  done
+  if [ "\${PORT_OK}" != "1" ]; then
+    echo "port \${PORT} not listening after 90s" >&2
     journalctl -u "\${SERVICE}" --no-pager -n 50
-    exit 1
+    return 1
   fi
-  sleep 2
+
+  echo "=== provision: http_health ==="
+  local HTTP_OK=0
+  for _ in \$(seq 1 30); do
+    if curl -sf -o /dev/null -m 5 http://127.0.0.1:\${PORT}/; then
+      HTTP_OK=1
+      break
+    fi
+    if ! systemctl is-active --quiet "\${SERVICE}"; then
+      echo "service crashed during HTTP health check" >&2
+      journalctl -u "\${SERVICE}" --no-pager -n 50
+      return 1
+    fi
+    sleep 2
+  done
+  if [ "\${HTTP_OK}" != "1" ]; then
+    echo "HTTP health check failed — gateway not responding on port \${PORT}" >&2
+    journalctl -u "\${SERVICE}" --no-pager -n 50
+    return 1
+  fi
+
+  return 0
+}
+
+CD_OK=0
+for ATTEMPT in \$(seq 1 \${MAX_CD_RETRIES}); do
+  echo "=== provision: attempt \${ATTEMPT}/\${MAX_CD_RETRIES} ==="
+  if try_start_and_health; then
+    CD_OK=1
+    break
+  fi
+  if [ "\${ATTEMPT}" -lt "\${MAX_CD_RETRIES}" ]; then
+    echo "=== provision: retry (attempt \${ATTEMPT} failed, restarting service) ==="
+    sleep 3
+  fi
 done
-if [ "\${HTTP_OK}" != "1" ]; then
-  echo "HTTP health check failed — gateway not responding on port \${PORT}" >&2
-  journalctl -u "\${SERVICE}" --no-pager -n 50
+
+if [ "\${CD_OK}" != "1" ]; then
+  echo "=== provision: all_retries_exhausted ==="
   exit 1
 fi
 
@@ -679,7 +714,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     await logInstanceEvent({
       instanceId: instance.id,
       stage: currentStage,
-      message: "Waiting for cloud-init bootstrap (Node, OpenClaw, Caddy)...",
+      message: PROVISION_EVENT.bootstrapping,
     })
     await sshPollBootstrap(target)
     await logInstanceEvent({
@@ -687,7 +722,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       stage: currentStage,
       action: "bootstrap_complete",
       result: "ok",
-      message: "Server bootstrap complete. All dependencies installed.",
+      message: PROVISION_EVENT.bootstrapComplete,
     })
 
     /* --- 5. Credentials --------------------------------------------- */
@@ -790,45 +825,74 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       { timeoutMs: PROVISION_INSTALL_START_SSH_TIMEOUT_MS },
     )
     await logSshStep(instance.id, installStep)
-    if (installStep.exitCode !== 0 && installStep.exitCode !== null) {
+    const installFailed = installStep.exitCode !== 0 && installStep.exitCode !== null
+    if (installFailed) {
       const stdout = installStep.stdout
       let failedPhase = "B+C+D"
       if (stdout.includes("caddy validate failed") || !stdout.includes("install_service_done")) {
         failedPhase = "B (caddy/systemd)"
+      } else if (stdout.includes("all_retries_exhausted")) {
+        failedPhase = "C+D (service start/health — all retries exhausted)"
       } else if (!stdout.includes("start_service_done")) {
         failedPhase = "C (service start)"
       } else if (!stdout.includes("provision: done")) {
         failedPhase = "D (health check)"
       }
-      throw new Error(
-        `Provision phase ${failedPhase} failed (exit ${installStep.exitCode}): ${installStep.stderr || installStep.stdout}`,
-      )
+
+      const isHealthOnlyFailure =
+        stdout.includes("install_service_done") && !stdout.includes("provision: done")
+      const softCommit = isHealthOnlyFailure && process.env.KEEP_FAILED_VMS === "true"
+
+      if (softCommit) {
+        await logInstanceEvent({
+          instanceId: instance.id,
+          level: "warn",
+          stage: currentStage,
+          action: "soft_commit",
+          result: "error",
+          message: `Phase ${failedPhase} failed but KEEP_FAILED_VMS=true — soft-committing instance as running so you can SSH in and debug. The VM, Caddy, and systemd unit are all in place.`,
+        })
+      } else {
+        throw new Error(
+          `Provision phase ${failedPhase} failed (exit ${installStep.exitCode}): ${installStep.stderr || installStep.stdout}`,
+        )
+      }
     }
-    await logInstanceEvent({
-      instanceId: instance.id,
-      stage: currentStage,
-      action: "caddy_reloaded",
-      result: "ok",
-      message: PROVISION_EVENT.caddyReloaded,
-    })
 
-    currentStage = "health_check"
-    await setProvisionStage(instance.id, currentStage)
-    await logInstanceEvent({
-      instanceId: instance.id,
-      stage: currentStage,
-      action: "port_listening",
-      result: "ok",
-      message: PROVISION_EVENT.portListening,
-    })
+    if (!installFailed) {
+      await logInstanceEvent({
+        instanceId: instance.id,
+        stage: currentStage,
+        action: "caddy_reloaded",
+        result: "ok",
+        message: PROVISION_EVENT.caddyReloaded,
+      })
+      await logInstanceEvent({
+        instanceId: instance.id,
+        stage: currentStage,
+        action: "service_active",
+        result: "ok",
+        message: PROVISION_EVENT.serviceActive,
+      })
 
-    await logInstanceEvent({
-      instanceId: instance.id,
-      stage: currentStage,
-      action: "health_ok",
-      result: "ok",
-      message: PROVISION_EVENT.httpHealthOk,
-    })
+      currentStage = "health_check"
+      await setProvisionStage(instance.id, currentStage)
+      await logInstanceEvent({
+        instanceId: instance.id,
+        stage: currentStage,
+        action: "port_listening",
+        result: "ok",
+        message: PROVISION_EVENT.portListening,
+      })
+
+      await logInstanceEvent({
+        instanceId: instance.id,
+        stage: currentStage,
+        action: "health_ok",
+        result: "ok",
+        message: PROVISION_EVENT.httpHealthOk,
+      })
+    }
 
     /* --- 12. Commit state ------------------------------------------- */
     currentStage = "commit"
