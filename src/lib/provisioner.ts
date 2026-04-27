@@ -97,7 +97,7 @@ echo "=== provision: write_config_done ==="
 }
 
 /** Wall-clock for the merged install+start+health SSH script. */
-const PROVISION_INSTALL_START_SSH_TIMEOUT_MS = 180_000
+const PROVISION_INSTALL_START_SSH_TIMEOUT_MS = 300_000
 
 /**
  * Merged Phase B+C+D — install Caddy + systemd, start service, wait for
@@ -160,6 +160,7 @@ echo "=== provision: install_service_done ==="
 try_start_and_health() {
   echo "=== provision: start ==="
   systemctl stop "\${SERVICE}" 2>/dev/null || true
+  systemctl reset-failed "\${SERVICE}" 2>/dev/null || true
   sleep 1
   timeout 30s systemctl start "\${SERVICE}" || true
 
@@ -180,12 +181,22 @@ try_start_and_health() {
   fi
   echo "=== provision: start_service_done ==="
 
+  local INITIAL_RESTARTS
+  INITIAL_RESTARTS=\$(systemctl show -p NRestarts --value "\${SERVICE}" 2>/dev/null || echo 0)
+
   echo "=== provision: wait_port ==="
   local PORT_OK=0
-  for _ in \$(seq 1 90); do
+  for _ in \$(seq 1 60); do
     if ss -tlnp 2>/dev/null | grep -q ":\${PORT}"; then
       PORT_OK=1
       break
+    fi
+    local CUR_RESTARTS
+    CUR_RESTARTS=\$(systemctl show -p NRestarts --value "\${SERVICE}" 2>/dev/null || echo 0)
+    if [ "\${CUR_RESTARTS}" -gt "\${INITIAL_RESTARTS}" ]; then
+      echo "service is crash-looping (\${CUR_RESTARTS} restarts since start)" >&2
+      journalctl -u "\${SERVICE}" --no-pager -n 50
+      return 1
     fi
     if ! systemctl is-active --quiet "\${SERVICE}"; then
       echo "service crashed during port wait" >&2
@@ -195,17 +206,24 @@ try_start_and_health() {
     sleep 1
   done
   if [ "\${PORT_OK}" != "1" ]; then
-    echo "port \${PORT} not listening after 90s" >&2
+    echo "port \${PORT} not listening after 60s" >&2
     journalctl -u "\${SERVICE}" --no-pager -n 50
     return 1
   fi
 
   echo "=== provision: http_health ==="
   local HTTP_OK=0
-  for _ in \$(seq 1 30); do
+  for _ in \$(seq 1 20); do
     if curl -sf -o /dev/null -m 5 http://127.0.0.1:\${PORT}/; then
       HTTP_OK=1
       break
+    fi
+    local CUR_RESTARTS
+    CUR_RESTARTS=\$(systemctl show -p NRestarts --value "\${SERVICE}" 2>/dev/null || echo 0)
+    if [ "\${CUR_RESTARTS}" -gt "\${INITIAL_RESTARTS}" ]; then
+      echo "service is crash-looping during health check (\${CUR_RESTARTS} restarts)" >&2
+      journalctl -u "\${SERVICE}" --no-pager -n 50
+      return 1
     fi
     if ! systemctl is-active --quiet "\${SERVICE}"; then
       echo "service crashed during HTTP health check" >&2

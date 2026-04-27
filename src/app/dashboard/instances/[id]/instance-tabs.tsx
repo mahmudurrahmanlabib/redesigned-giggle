@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
+import { useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import { buildPublicGatewayUrl } from "@/lib/instance-gateway-access"
 
@@ -24,8 +24,6 @@ type InstanceLite = {
   hasGatewayToken: boolean
   deploymentTarget: string | null
   provisionStage: string | null
-  /** Server-derived seconds since instance creation; avoids client clock skew vs log timestamps */
-  provisioningElapsedSec: number | null
 }
 
 type LogLite = { id: string; level: string; message: string; createdAt: string }
@@ -37,7 +35,6 @@ type StatusPayload = {
   tlsStatus: string | null
   managedSubdomain: string | null
   provisionStage: string | null
-  provisioningElapsedSec: number | null
   logs: LogLite[]
 }
 
@@ -56,9 +53,6 @@ function useInstancePolling(initialInstance: InstanceLite, initialLogs: LogLite[
   const [tlsStatus, setTlsStatus] = useState(initialInstance.tlsStatus)
   const [managedSubdomain, setManagedSubdomain] = useState(initialInstance.managedSubdomain)
   const [provisionStage, setProvisionStage] = useState(initialInstance.provisionStage)
-  const [provisioningElapsedSec, setProvisioningElapsedSec] = useState(
-    initialInstance.provisioningElapsedSec,
-  )
   const [logs, setLogs] = useState(initialLogs)
   const router = useRouter()
   const prevStatus = useRef(initialInstance.status)
@@ -69,8 +63,7 @@ function useInstancePolling(initialInstance: InstanceLite, initialLogs: LogLite[
 
   useEffect(() => {
     setProvisionStage(initialInstance.provisionStage)
-    setProvisioningElapsedSec(initialInstance.provisioningElapsedSec)
-  }, [initialInstance.provisionStage, initialInstance.provisioningElapsedSec])
+  }, [initialInstance.provisionStage])
 
   // Poll while the row is moving through any non-terminal transition state.
   const isPolling =
@@ -92,7 +85,6 @@ function useInstancePolling(initialInstance: InstanceLite, initialLogs: LogLite[
         setTlsStatus(data.tlsStatus)
         setManagedSubdomain(data.managedSubdomain)
         setProvisionStage(data.provisionStage ?? null)
-        setProvisioningElapsedSec(data.provisioningElapsedSec ?? null)
         setLogs(data.logs)
 
         const wasTransient =
@@ -132,7 +124,6 @@ function useInstancePolling(initialInstance: InstanceLite, initialLogs: LogLite[
       tlsStatus,
       managedSubdomain,
       provisionStage,
-      provisioningElapsedSec,
     },
     logs,
   }
@@ -644,58 +635,14 @@ const PROVISION_STEPS = [
 /** Matches `VpsStage` in provisioner — shown under the checklist while a stage runs */
 const PROVISION_STAGE_HINTS: Record<string, string> = {
   create_vm: "Creating your VM in the cloud region you selected.",
-  wait_boot: "Waiting for the provider to finish boot — disks and networking are coming up.",
-  waiting_ssh: "Waiting for SSH. Cloud-init may still be running on the server.",
-  bootstrap:
-    "Installing Node.js, OpenClaw, and Caddy. This step often takes 5–20 minutes (npm downloads and native builds are slow on smaller plans). You can leave this page open — work continues in the background.",
-  writing_config: "Writing OpenClaw configuration and preparing the reverse proxy.",
-  installing_service: "Installing the systemd unit for the OpenClaw gateway.",
-  starting_service: "Starting the OpenClaw gateway process.",
-  health_check: "Checking that the gateway port is listening.",
-  commit: "Finalizing deployment state.",
-}
-
-function formatProvisioningElapsed(totalSeconds: number): string {
-  const s = Math.max(0, Math.floor(totalSeconds))
-  const m = Math.floor(s / 60)
-  const h = Math.floor(m / 60)
-  if (h > 0) return `${h}h ${m % 60}m`
-  if (m > 0) return `${m}m ${s % 60}s`
-  return `${s}s`
-}
-
-/**
- * Elapsed time computed from `createdAt` and ticked locally every second.
- *
- * Uses the instance's immutable `createdAt` timestamp — never null, never
- * changes — so the timer is strictly monotonic and immune to polling
- * jitter or transient null values from the status API.
- */
-function useProvisioningElapsed(active: boolean, createdAt: string) {
-  const [label, setLabel] = useState("")
-  const startMs = useMemo(() => new Date(createdAt).getTime(), [createdAt])
-
-  useEffect(() => {
-    if (!active) {
-      setLabel("")
-      return
-    }
-    const tick = () => {
-      const elapsed = Math.max(0, Math.floor((Date.now() - startMs) / 1000))
-      setLabel(formatProvisioningElapsed(elapsed))
-    }
-    tick()
-    const id = setInterval(tick, 1000)
-    const onVisible = () => {
-      if (document.visibilityState === "visible") tick()
-    }
-    document.addEventListener("visibilitychange", onVisible)
-    return () => {
-      clearInterval(id)
-      document.removeEventListener("visibilitychange", onVisible)
-    }
-  }, [active, startMs])
-  return label
+  wait_boot: "Waiting for the server to finish booting.",
+  waiting_ssh: "Connecting to the server over SSH.",
+  bootstrap: "Setting up the server environment.",
+  writing_config: "Writing configuration files.",
+  installing_service: "Starting services and running health checks.",
+  starting_service: "Starting the OpenClaw gateway.",
+  health_check: "Verifying the gateway is responding.",
+  commit: "Finalizing deployment.",
 }
 
 function ProvisioningCard({ instance, logs }: { instance: InstanceLite; logs: LogLite[] }) {
@@ -704,14 +651,12 @@ function ProvisioningCard({ instance, logs }: { instance: InstanceLite; logs: Lo
   const isRunning = instance.status === "running"
   const isActive = !isFailed && !isRunning
 
-  const elapsed = useProvisioningElapsed(isActive, instance.createdAt)
-
   const stageHint =
     isActive &&
     (instance.provisionStage
       ? PROVISION_STAGE_HINTS[instance.provisionStage] ??
         "Still working — safe to leave this page open."
-      : "Provisioning is starting. First-time setup usually takes several minutes.")
+      : "Provisioning is starting.")
 
   const steps = PROVISION_STEPS.filter((s) =>
     logMessages.some((m) => m.includes(s.match))
@@ -723,7 +668,7 @@ function ProvisioningCard({ instance, logs }: { instance: InstanceLite; logs: Lo
     ? "Provisioning Failed"
     : isRunning
       ? "Provisioning Complete"
-      : `Provisioning${elapsed ? ` \u00b7 ${elapsed}` : ""}`
+      : "Provisioning"
 
   return (
     <Card title={title}>
