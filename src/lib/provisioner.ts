@@ -7,14 +7,14 @@ import {
 } from "@/lib/instance-state"
 import { allocatePort, FleetEmptyError, FleetFullError, pickHost } from "@/lib/host-scheduler"
 import {
-  sshBootstrapVps,
+  buildBootstrapScript,
   sshDockerRestart,
   sshDockerRm,
   sshDockerRun,
   sshDockerStart,
   sshDockerStop,
+  sshPollBootstrap,
   sshRun,
-  sshRunLogged,
   sshRunScriptLogged,
   sshVmHasCloudflareOriginCerts,
   type SshStepResult,
@@ -23,6 +23,8 @@ import {
   sshSystemctlStop,
   sshWaitReady,
   type SshTarget,
+  normalizePem,
+  isValidPem,
 } from "@/lib/ssh"
 import { decryptSecret, encryptSecret } from "@/lib/crypto-secret"
 import {
@@ -38,7 +40,6 @@ import {
   renderOpenclawConfig,
   renderSystemdUnit,
 } from "@/lib/openclaw"
-import { buildGatewayAllowedOrigins } from "@/lib/instance-gateway-access"
 import { PROVISION_EVENT } from "@/lib/provision-events"
 import { getVmProvider, describeVmError } from "@/lib/vm-provider"
 import { createAgentSubdomain, deleteAgentSubdomain } from "@/lib/agent-dns"
@@ -61,48 +62,21 @@ const FALLBACK_PLAN = "g6-standard-2"
 
 const OPENCLAW_DIR = "/opt/openclaw"
 
-function shouldSkipOpenclawOnboard(): boolean {
-  return (
-    process.env.SKIP_OPENCLAW_ONBOARD === "1" || process.env.OPENCLAW_ONBOARD === "0"
-  )
-}
-
-function openclawOnboardTimeoutSec(): number {
-  const raw = process.env.OPENCLAW_ONBOARD_TIMEOUT_SEC
-  const parsed = raw ? parseInt(raw, 10) : NaN
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 300
-}
-
 function bashSingleQuoteForScript(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
 }
 
-function openclawCliArgs(...args: string[]): string {
-  return args.map(bashSingleQuoteForScript).join(" ")
-}
-
 /**
- * Phase A — write `.env`, run onboard, run config-set commands.
- * Bounded by `onboardTimeoutSec` (onboard) and `30s` per config call inside
- * the script; the SSH wrapper applies an outer wall-clock too.
+ * Phase A — write `.env` + `openclaw.json` directly as file writes.
+ * Replaces the old onboard + 11x sequential `config set` CLI calls with a
+ * single script that drops two files. ~5s instead of ~63s.
  */
 function buildPhaseWriteConfig(opts: {
   envB64: string
-  skipOnboard: boolean
-  onboardTimeoutSec: number
-  openclawConfigArgss: string[][]
+  configB64: string
 }): string {
-  const skipFlag = opts.skipOnboard ? "1" : "0"
-  const onboardTimeout = String(opts.onboardTimeoutSec)
-  const configLines = opts.openclawConfigArgss
-    .map(
-      (argv) =>
-        `timeout 30s sudo -u openclaw HOME=${bashSingleQuoteForScript(OPENCLAW_DIR)} /usr/bin/openclaw ${openclawCliArgs(...argv)} </dev/null 2>&1 || exit 1`,
-    )
-    .join("\n")
-
   return `#!/bin/bash
-set -uo pipefail
+set -euo pipefail
 OC_HOME=${bashSingleQuoteForScript(OPENCLAW_DIR)}
 
 echo "=== provision: write_env ==="
@@ -110,21 +84,10 @@ echo ${bashSingleQuoteForScript(opts.envB64)} | base64 -d > "\${OC_HOME}/.env" |
 chmod 600 "\${OC_HOME}/.env"
 chown openclaw:openclaw "\${OC_HOME}/.env"
 
-echo "=== provision: onboard ==="
-ONBOARD_EC=0
-if [ "${skipFlag}" = "1" ]; then
-  echo "provision: onboard skipped (SKIP_OPENCLAW_ONBOARD=1 or OPENCLAW_ONBOARD=0)"
-else
-  set +e
-  timeout --kill-after=10s ${onboardTimeout}s sudo -u openclaw HOME="\${OC_HOME}" /usr/bin/openclaw onboard --non-interactive --mode local --auth-choice skip --accept-risk --skip-health </dev/null 2>&1
-  ONBOARD_EC=$?
-  set -e
-fi
-echo "onboard_exit:\${ONBOARD_EC}"
-
-set -e
-echo "=== provision: config ==="
-${configLines}
+echo "=== provision: write_config ==="
+mkdir -p "\${OC_HOME}/.openclaw"
+echo ${bashSingleQuoteForScript(opts.configB64)} | base64 -d > "\${OC_HOME}/.openclaw/openclaw.json" || exit 1
+chown -R openclaw:openclaw "\${OC_HOME}/.openclaw"
 
 echo "=== provision: config_dump ==="
 cat "\${OC_HOME}/.openclaw/openclaw.json" 2>/dev/null || echo "no config file"
@@ -133,33 +96,31 @@ echo "=== provision: write_config_done ==="
 `
 }
 
-/** Wall-clock for Phase B remote script (Caddy + systemd). Must cover validate + 60s poll + daemon-reload/enable. */
-const PROVISION_PHASE_B_SSH_TIMEOUT_MS = 120_000
+/** Wall-clock for the merged install+start+health SSH script. */
+const PROVISION_INSTALL_START_SSH_TIMEOUT_MS = 180_000
 
-/** Phase B — install Caddy config + systemd unit (no service start yet). */
-function buildPhaseInstallService(opts: { caddyB64: string; unitB64: string }): string {
+/**
+ * Merged Phase B+C+D — install Caddy + systemd, start service, wait for
+ * gateway port. Runs in a single SSH session to eliminate connect/auth
+ * overhead (~6-9s saved).
+ */
+function buildPhaseInstallAndStart(opts: { caddyB64: string; unitB64: string }): string {
   return `#!/bin/bash
 set -uo pipefail
 export SYSTEMD_PAGER=cat
 SERVICE=${bashSingleQuoteForScript(OPENCLAW_SERVICE_NAME)}
+PORT=${bashSingleQuoteForScript(String(OPENCLAW_GATEWAY_PORT))}
 
+# --- Phase B: Caddy + systemd ---
 echo "=== provision: caddyfile_write ==="
 echo ${bashSingleQuoteForScript(opts.caddyB64)} | base64 -d > /etc/caddy/Caddyfile
 
-# Validate first so a bad Caddyfile fails fast with a clear error rather than
-# blocking a reload/restart.
 echo "=== provision: caddy_validate ==="
 if ! timeout 30s /usr/bin/caddy validate --config /etc/caddy/Caddyfile; then
   echo "caddy validate failed" >&2
   exit 1
 fi
 
-# Restart (not reload) so the new config is always picked up cleanly even on
-# the first deploy. Use --no-block + explicit polling: \`systemctl restart\`
-# blocks until the unit reaches "active" or hits TimeoutStartSec, and on a
-# fresh VPS Caddy provisioning its internal CA + binding :443 with a new
-# hostname can exceed a tight wall-clock. --no-block returns immediately and
-# we poll is-active ourselves so we can emit progress.
 echo "=== provision: caddy_restart ==="
 systemctl --no-block restart caddy
 echo "=== provision: caddy_wait_active ==="
@@ -182,27 +143,15 @@ if [ "\${ACTIVE_OK}" != "1" ]; then
 fi
 echo "=== provision: caddy_active ==="
 
-echo "=== provision: systemd ==="
-set -e
 echo "=== provision: systemd_unit_file ==="
 echo ${bashSingleQuoteForScript(opts.unitB64)} | base64 -d > "/etc/systemd/system/\${SERVICE}.service"
 echo "=== provision: systemd_daemon_reload ==="
-# No per-command \`timeout\` here: GNU \`timeout\` exits 124 and was too tight
-# on slow D-Bus; the SSH client applies PROVISION_PHASE_B_SSH_TIMEOUT_MS.
 systemctl daemon-reload
 echo "=== provision: systemd_enable ==="
 systemctl --no-pager enable "\${SERVICE}"
-
 echo "=== provision: install_service_done ==="
-`
-}
 
-/** Phase C — start the service and wait for it to become active. */
-function buildPhaseStartService(): string {
-  return `#!/bin/bash
-set -uo pipefail
-SERVICE=${bashSingleQuoteForScript(OPENCLAW_SERVICE_NAME)}
-
+# --- Phase C: start service ---
 echo "=== provision: start ==="
 timeout 30s systemctl start "\${SERVICE}" || true
 
@@ -220,18 +169,9 @@ if [ "\${ACTIVE_OK}" != "1" ]; then
   journalctl -u "\${SERVICE}" --no-pager -n 40
   exit 1
 fi
-
 echo "=== provision: start_service_done ==="
-`
-}
 
-/** Phase D — wait for gateway port to bind. */
-function buildPhaseHealthCheck(): string {
-  return `#!/bin/bash
-set -uo pipefail
-SERVICE=${bashSingleQuoteForScript(OPENCLAW_SERVICE_NAME)}
-PORT=${bashSingleQuoteForScript(String(OPENCLAW_GATEWAY_PORT))}
-
+# --- Phase D: health check ---
 echo "=== provision: wait_port ==="
 PORT_OK=0
 for _ in \$(seq 1 90); do
@@ -297,7 +237,7 @@ async function waitForVmRunning(vmId: string, timeoutMs = 180_000): Promise<stri
     if (vm.status === "running" && vm.ipv4?.[0]) {
       return vm.ipv4[0]
     }
-    await new Promise((r) => setTimeout(r, 5_000))
+    await new Promise((r) => setTimeout(r, 3_000))
   }
   throw new Error(`VM ${vmId} did not reach "running" within ${timeoutMs}ms`)
 }
@@ -585,12 +525,32 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
   const providerRegion = region?.providerRegion ?? FALLBACK_REGION
   const providerPlan = serverConfig?.providerPlan ?? FALLBACK_PLAN
 
+  const cfOriginCertPem = process.env.CLOUDFLARE_ORIGIN_CERT_PEM
+    ? normalizePem(process.env.CLOUDFLARE_ORIGIN_CERT_PEM)
+    : undefined
+  const cfOriginKeyPem = process.env.CLOUDFLARE_ORIGIN_CERT_KEY
+    ? normalizePem(process.env.CLOUDFLARE_ORIGIN_CERT_KEY)
+    : undefined
+
+  if (cfOriginCertPem && !isValidPem(cfOriginCertPem)) {
+    throw new Error(
+      "CLOUDFLARE_ORIGIN_CERT_PEM is set but does not contain valid PEM data (missing -----BEGIN header). " +
+        "Check the env var encoding — multi-line PEM values need real newlines, not literal \\n strings.",
+    )
+  }
+  if (cfOriginKeyPem && !isValidPem(cfOriginKeyPem)) {
+    throw new Error(
+      "CLOUDFLARE_ORIGIN_CERT_KEY is set but does not contain valid PEM data (missing -----BEGIN header). " +
+        "Check the env var encoding — multi-line PEM values need real newlines, not literal \\n strings.",
+    )
+  }
+
   let vmId: string | undefined = instance.vmId ?? undefined
   let ipAddress: string | undefined = instance.ipAddress ?? undefined
   let currentStage: VpsStage = "create_vm"
 
   try {
-    /* --- 1. Create VM ------------------------------------------------ */
+    /* --- 1. Create VM (with cloud-init bootstrap) -------------------- */
     currentStage = "create_vm"
     await setProvisionStage(instance.id, currentStage)
     if (!vmId) {
@@ -598,6 +558,13 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
         instanceId: instance.id,
         stage: currentStage,
         message: `Creating VM (${providerPlan} in ${providerRegion})...`,
+      })
+
+      const bootstrapScript = buildBootstrapScript({
+        openclawVersion: OPENCLAW_VERSION(),
+        minNodeVersion: OPENCLAW_VPS_MIN_NODE,
+        cfOriginCertPem,
+        cfOriginKeyPem,
       })
 
       const publicKey = process.env.SSH_FLEET_PUBLIC_KEY
@@ -609,6 +576,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
         rootPassword,
         authorizedKeys: publicKey ? [publicKey] : undefined,
         tags: ["sovereignml", "openclaw", "vps"],
+        userData: bootstrapScript,
       })
       vmId = vm.id
 
@@ -623,7 +591,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
         action: "vm_created",
         result: "ok",
         detail: { vmId },
-        message: `VM ${vmId} created. Waiting for boot...`,
+        message: `VM ${vmId} created with cloud-init bootstrap. Waiting for boot...`,
       })
     }
 
@@ -685,20 +653,15 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     })
     await sshWaitReady(target)
 
-    /* --- 4. Bootstrap (install Node, OpenClaw, Caddy over SSH) ------- */
+    /* --- 4. Wait for cloud-init bootstrap to complete ---------------- */
     currentStage = "bootstrap"
     await setProvisionStage(instance.id, currentStage)
     await logInstanceEvent({
       instanceId: instance.id,
       stage: currentStage,
-      message: "Bootstrapping server (Node, OpenClaw, Caddy)...",
+      message: "Waiting for cloud-init bootstrap (Node, OpenClaw, Caddy)...",
     })
-    await sshBootstrapVps(target, {
-      openclawVersion: OPENCLAW_VERSION(),
-      minNodeVersion: OPENCLAW_VPS_MIN_NODE,
-      cfOriginCertPem: process.env.CLOUDFLARE_ORIGIN_CERT_PEM,
-      cfOriginKeyPem: process.env.CLOUDFLARE_ORIGIN_CERT_KEY,
-    })
+    await sshPollBootstrap(target)
     await logInstanceEvent({
       instanceId: instance.id,
       stage: currentStage,
@@ -759,62 +722,28 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     const unitContent = renderSystemdUnit()
     const unitB64 = Buffer.from(unitContent, "utf8").toString("base64")
 
-    const allowedOrigins = buildGatewayAllowedOrigins({
+    const openclawConfigContent = renderOpenclawConfig({
+      gatewayToken,
+      openRouterApiKey: OPENROUTER_API_KEY(),
+      model: route.model,
+      fallbackModel: route.fallback,
       domain: instance.domain,
       managedSubdomain: managedSubdomainForProvision,
       ipAddress,
       tlsStatus: instance.domain ? instance.tlsStatus : null,
     })
+    const configB64 = Buffer.from(openclawConfigContent, "utf8").toString("base64")
 
-    const openclawConfigArgss: string[][] = [
-      ["config", "set", "gateway.mode", "local"],
-      ["config", "set", "gateway.port", String(OPENCLAW_GATEWAY_PORT)],
-      ["config", "set", "gateway.bind", "loopback"],
-      ["config", "set", "gateway.auth.token", JSON.stringify(gatewayToken)],
-      ["config", "set", "gateway.remote.token", JSON.stringify(gatewayToken)],
-      ["config", "set", "gateway.trustedProxies", '["127.0.0.1"]'],
-      ["config", "set", "gateway.controlUi.allowedOrigins", JSON.stringify(allowedOrigins)],
-      ["config", "set", "gateway.controlUi.allowInsecureAuth", "true"],
-      ["config", "set", "gateway.controlUi.dangerouslyDisableDeviceAuth", "true"],
-      ["config", "set", "agents.defaults.model.primary", JSON.stringify(route.model)],
-      ["config", "set", "agents.defaults.model.fallbacks", JSON.stringify([route.fallback])],
-    ]
-
-    const skipOnboard = shouldSkipOpenclawOnboard()
-
-    /* Phase A — write env, onboard, apply OpenClaw config */
-    const onboardTimeoutSec = openclawOnboardTimeoutSec()
-    const phaseATimeoutMs = Math.max(120, onboardTimeoutSec + 120) * 1000
-    const phaseAScript = buildPhaseWriteConfig({
-      envB64,
-      skipOnboard,
-      onboardTimeoutSec,
-      openclawConfigArgss,
-    })
+    /* Phase A — write .env + openclaw.json directly (batch, ~5s) */
+    const phaseAScript = buildPhaseWriteConfig({ envB64, configB64 })
     const phaseAStep = await sshRunScriptLogged(
       target,
       phaseAScript,
       currentStage,
-      "provision:phaseA (env, onboard, config)",
-      { timeoutMs: phaseATimeoutMs },
+      "provision:phaseA (env, config write)",
+      { timeoutMs: 60_000 },
     )
     await logSshStep(instance.id, phaseAStep)
-
-    const onboardExitLine = phaseAStep.stdout
-      .split("\n")
-      .find((line) => line.startsWith("onboard_exit:"))
-    const onboardExit = onboardExitLine
-      ? parseInt(onboardExitLine.slice("onboard_exit:".length), 10)
-      : 0
-    if (!skipOnboard && Number.isFinite(onboardExit) && onboardExit !== 0) {
-      await logInstanceEvent({
-        instanceId: instance.id,
-        level: "warn",
-        stage: currentStage,
-        action: "onboard_failed",
-        message: `openclaw onboard failed (exit ${onboardExit}), continued with config set...`,
-      })
-    }
 
     if (phaseAStep.exitCode !== 0 && phaseAStep.exitCode !== null) {
       throw new Error(
@@ -830,20 +759,29 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       message: PROVISION_EVENT.configWritten,
     })
 
-    /* Phase B — install Caddy + systemd unit */
+    /* Phase B+C+D — install Caddy + systemd, start service, health check (single SSH session) */
     currentStage = "installing_service"
     await setProvisionStage(instance.id, currentStage)
-    const phaseBStep = await sshRunScriptLogged(
+    const installStep = await sshRunScriptLogged(
       target,
-      buildPhaseInstallService({ caddyB64, unitB64 }),
+      buildPhaseInstallAndStart({ caddyB64, unitB64 }),
       currentStage,
-      "provision:phaseB (caddy, systemd)",
-      { timeoutMs: PROVISION_PHASE_B_SSH_TIMEOUT_MS },
+      "provision:phaseB+C+D (caddy, systemd, start, health)",
+      { timeoutMs: PROVISION_INSTALL_START_SSH_TIMEOUT_MS },
     )
-    await logSshStep(instance.id, phaseBStep)
-    if (phaseBStep.exitCode !== 0 && phaseBStep.exitCode !== null) {
+    await logSshStep(instance.id, installStep)
+    if (installStep.exitCode !== 0 && installStep.exitCode !== null) {
+      const stdout = installStep.stdout
+      let failedPhase = "B+C+D"
+      if (stdout.includes("caddy validate failed") || !stdout.includes("install_service_done")) {
+        failedPhase = "B (caddy/systemd)"
+      } else if (!stdout.includes("start_service_done")) {
+        failedPhase = "C (service start)"
+      } else if (!stdout.includes("provision: done")) {
+        failedPhase = "D (health check)"
+      }
       throw new Error(
-        `Provision phase B failed (exit ${phaseBStep.exitCode}): ${phaseBStep.stderr || phaseBStep.stdout}`,
+        `Provision phase ${failedPhase} failed (exit ${installStep.exitCode}): ${installStep.stderr || installStep.stdout}`,
       )
     }
     await logInstanceEvent({
@@ -854,46 +792,8 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       message: PROVISION_EVENT.caddyReloaded,
     })
 
-    /* Phase C — start the service and wait for active */
-    currentStage = "starting_service"
-    await setProvisionStage(instance.id, currentStage)
-    const phaseCStep = await sshRunScriptLogged(
-      target,
-      buildPhaseStartService(),
-      currentStage,
-      "provision:phaseC (systemctl start + wait_active)",
-      { timeoutMs: 90_000 },
-    )
-    await logSshStep(instance.id, phaseCStep)
-    if (phaseCStep.exitCode !== 0 && phaseCStep.exitCode !== null) {
-      throw new Error(
-        `Provision phase C failed (exit ${phaseCStep.exitCode}): ${phaseCStep.stderr || phaseCStep.stdout}`,
-      )
-    }
-    await logInstanceEvent({
-      instanceId: instance.id,
-      stage: currentStage,
-      action: "service_active",
-      result: "ok",
-      message: PROVISION_EVENT.serviceActive,
-    })
-
-    /* Phase D — health check (port listening) */
     currentStage = "health_check"
     await setProvisionStage(instance.id, currentStage)
-    const phaseDStep = await sshRunScriptLogged(
-      target,
-      buildPhaseHealthCheck(),
-      currentStage,
-      "provision:phaseD (wait_port)",
-      { timeoutMs: 150_000 },
-    )
-    await logSshStep(instance.id, phaseDStep)
-    if (phaseDStep.exitCode !== 0 && phaseDStep.exitCode !== null) {
-      throw new Error(
-        `Provision phase D failed (exit ${phaseDStep.exitCode}): ${phaseDStep.stderr || phaseDStep.stdout}`,
-      )
-    }
     await logInstanceEvent({
       instanceId: instance.id,
       stage: currentStage,

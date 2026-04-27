@@ -127,8 +127,7 @@ export function renderOpenclawConfig(args: {
  * Headers forwarded to OpenClaw:
  *  - Host (original request host, required for multi-tenant routing)
  *  - X-Real-IP (real client IP for audit/rate-limiting)
- *  - X-Forwarded-Proto (scheme so OpenClaw knows TLS terminated at proxy)
- *  - X-Forwarded-For / Authorization are passed by Caddy automatically
+ *  - X-Forwarded-For / X-Forwarded-Proto / Authorization are passed by Caddy automatically
  */
 export type RenderCaddyfileArgs = {
   domain?: string | null
@@ -141,7 +140,6 @@ export function renderCaddyfile(args: RenderCaddyfileArgs): string {
   const upstreamBlock = `reverse_proxy localhost:${OPENCLAW_GATEWAY_PORT} {
     header_up Host {host}
     header_up X-Real-IP {remote_host}
-    header_up X-Forwarded-Proto {scheme}
   }`
 
   const domain = args.domain?.trim()

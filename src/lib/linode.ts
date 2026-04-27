@@ -68,6 +68,9 @@ export class LinodeProvider implements VmProvider {
       image: opts.image ?? "linode/ubuntu24.04",
       authorized_keys: opts.authorizedKeys,
       tags: opts.tags,
+      ...(opts.userData
+        ? { metadata: { user_data: Buffer.from(opts.userData, "utf8").toString("base64") } }
+        : {}),
     } as CreateLinodeRequest
     const vm = await createLinode(payload)
     return linodeToVmInfo(vm)

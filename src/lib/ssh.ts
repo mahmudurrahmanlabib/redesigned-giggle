@@ -10,7 +10,24 @@ function loadPrivateKey(): string {
   if (!raw) {
     throw new Error("SSH_FLEET_PRIVATE_KEY is not set")
   }
+  return normalizePem(raw)
+}
+
+/**
+ * Normalize PEM-encoded strings from environment variables. Many secret
+ * stores / CI systems encode newlines as literal two-character `\n`
+ * sequences; PEM parsing requires real newline characters.
+ */
+export function normalizePem(raw: string): string {
   return raw.includes("\\n") ? raw.replace(/\\n/g, "\n") : raw
+}
+
+/**
+ * Returns true if `value` looks like it contains at least one PEM block
+ * (e.g. `-----BEGIN CERTIFICATE-----`).
+ */
+export function isValidPem(value: string): boolean {
+  return /-----BEGIN [A-Z0-9 ]+-----/.test(value)
 }
 
 async function connect(target: SshTarget): Promise<NodeSSH> {
@@ -94,11 +111,11 @@ export async function sshRunScript(
   }
 }
 
-/** True if bootstrap installed Cloudflare origin cert/key (Full/strict to origin on :443). */
+/** True if bootstrap installed valid Cloudflare origin cert/key (Full/strict to origin on :443). */
 export async function sshVmHasCloudflareOriginCerts(target: SshTarget): Promise<boolean> {
   const r = await sshRun(
     target,
-    "test -r /etc/caddy/cf/origin.pem -a -r /etc/caddy/cf/origin.key && echo 1 || echo 0",
+    "grep -q 'BEGIN' /etc/caddy/cf/origin.pem 2>/dev/null && grep -q 'BEGIN' /etc/caddy/cf/origin.key 2>/dev/null && echo 1 || echo 0",
   )
   return r.stdout.trim() === "1" && r.code === 0
 }
@@ -171,9 +188,9 @@ export async function sshWaitReady(
     try {
       const r = await sshRun(target, "echo ok")
       if (r.code === 0) {
-        // Verify stability: wait 5s and check again to ensure sshd
+        // Verify stability: wait 2s and check again to ensure sshd
         // isn't transiently available during cloud-init.
-        await new Promise((r) => setTimeout(r, 5_000))
+        await new Promise((r) => setTimeout(r, 2_000))
         try {
           const r2 = await sshRun(target, "echo ok")
           if (r2.code === 0) return
@@ -211,7 +228,7 @@ export type BootstrapOpts = {
 const BOOTSTRAP_STATUS = "/tmp/bootstrap.status"
 const BOOTSTRAP_LOG = "/var/log/bootstrap.log"
 
-function buildBootstrapScript(opts: BootstrapOpts): string {
+export function buildBootstrapScript(opts: BootstrapOpts): string {
   let cfBlock = ""
   if (opts.cfOriginCertPem && opts.cfOriginKeyPem) {
     const certB64 = Buffer.from(opts.cfOriginCertPem, "utf8").toString("base64")

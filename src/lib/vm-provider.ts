@@ -6,6 +6,8 @@ export type CreateVmOpts = {
   authorizedKeys?: string[]
   tags?: string[]
   image?: string
+  /** Cloud-init user-data script. Provider-agnostic: Linode, Hetzner, DO, Vultr all support this. */
+  userData?: string
 }
 
 export type VmInfo = {
