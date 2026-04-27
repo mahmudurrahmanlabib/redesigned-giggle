@@ -186,6 +186,26 @@ if [ "\${PORT_OK}" != "1" ]; then
   exit 1
 fi
 
+echo "=== provision: http_health ==="
+HTTP_OK=0
+for _ in \$(seq 1 30); do
+  if curl -sf -o /dev/null -m 5 http://127.0.0.1:\${PORT}/; then
+    HTTP_OK=1
+    break
+  fi
+  if ! systemctl is-active --quiet "\${SERVICE}"; then
+    echo "service crashed during HTTP health check" >&2
+    journalctl -u "\${SERVICE}" --no-pager -n 50
+    exit 1
+  fi
+  sleep 2
+done
+if [ "\${HTTP_OK}" != "1" ]; then
+  echo "HTTP health check failed — gateway not responding on port \${PORT}" >&2
+  journalctl -u "\${SERVICE}" --no-pager -n 50
+  exit 1
+fi
+
 echo "=== provision: done ==="
 `
 }
@@ -807,7 +827,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
       stage: currentStage,
       action: "health_ok",
       result: "ok",
-      message: `Port ${OPENCLAW_GATEWAY_PORT} is listening. OpenClaw is running.`,
+      message: PROVISION_EVENT.httpHealthOk,
     })
 
     /* --- 12. Commit state ------------------------------------------- */

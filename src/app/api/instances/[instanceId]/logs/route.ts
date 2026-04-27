@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/auth"
-import { db, instances, instanceLogs, eq, desc } from "@/db"
+import { db, instances, instanceLogs, eq, and, desc, lt } from "@/db"
 import { whereUserInstanceVisible } from "@/lib/instance-queries"
 
+const DEFAULT_LIMIT = 50
+const MAX_LIMIT = 200
+
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ instanceId: string }> }
 ) {
   const session = await auth()
@@ -16,46 +19,46 @@ export async function GET(
 
   const instance = await db.query.instances.findFirst({
     where: whereUserInstanceVisible(session.user.id, instanceId),
-    columns: {
-      id: true,
-      status: true,
-      ipAddress: true,
-      dnsStatus: true,
-      tlsStatus: true,
-      managedSubdomain: true,
-      createdAt: true,
-      provisionStage: true,
-    },
+    columns: { id: true },
   })
 
   if (!instance) {
     return NextResponse.json({ error: "Not found" }, { status: 404 })
   }
 
+  const url = new URL(req.url)
+  const cursor = url.searchParams.get("cursor")
+  const level = url.searchParams.get("level")
+  const limit = Math.min(
+    Math.max(1, Number(url.searchParams.get("limit")) || DEFAULT_LIMIT),
+    MAX_LIMIT,
+  )
+
+  const conditions = [eq(instanceLogs.instanceId, instanceId)]
+  if (cursor) {
+    conditions.push(lt(instanceLogs.id, cursor))
+  }
+  if (level && level !== "all") {
+    conditions.push(eq(instanceLogs.level, level))
+  }
+
   const logs = await db.query.instanceLogs.findMany({
-    where: eq(instanceLogs.instanceId, instanceId),
+    where: and(...conditions),
     orderBy: desc(instanceLogs.createdAt),
-    limit: 50,
+    limit: limit + 1,
   })
 
-  const provisioningElapsedSec =
-    instance.status === "pending" || instance.status === "provisioning"
-      ? Math.max(0, Math.floor((Date.now() - instance.createdAt.getTime()) / 1000))
-      : null
+  const hasMore = logs.length > limit
+  const page = hasMore ? logs.slice(0, limit) : logs
+  const nextCursor = hasMore ? page[page.length - 1].id : null
 
   return NextResponse.json({
-    status: instance.status,
-    ipAddress: instance.ipAddress,
-    dnsStatus: instance.dnsStatus,
-    tlsStatus: instance.tlsStatus,
-    managedSubdomain: instance.managedSubdomain,
-    provisionStage: instance.provisionStage ?? null,
-    provisioningElapsedSec,
-    logs: logs.map((l) => ({
+    logs: page.map((l) => ({
       id: l.id,
       level: l.level,
       message: l.message,
       createdAt: l.createdAt.toISOString(),
     })),
+    nextCursor,
   })
 }

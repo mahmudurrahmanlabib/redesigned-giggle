@@ -92,6 +92,7 @@ export function renderOpenclawConfig(args: {
   gateway: {
     port: ${OPENCLAW_GATEWAY_PORT},
     bind: "loopback",
+    disabledPlugins: ["bonjour", "device-pair", "phone-control", "browser"],
     auth: {
       token: ${JSON.stringify(args.gatewayToken)},
     },

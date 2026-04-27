@@ -16,6 +16,7 @@ export const PROVISION_EVENT = {
   caddyReloaded: "Caddy reloaded",
   serviceActive: "systemd service active",
   portListening: "Gateway port listening",
+  httpHealthOk: "HTTP health check passed",
 } as const
 
 export type ProvisionEvent = (typeof PROVISION_EVENT)[keyof typeof PROVISION_EVENT]

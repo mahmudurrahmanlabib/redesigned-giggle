@@ -22,13 +22,13 @@ export function routeModel(tier: BudgetTier): ModelRoute {
       return {
         provider: "openrouter",
         model: "meta-llama/llama-3.2-3b-instruct:free",
-        fallback: "google/gemini-2.0-flash-exp:free",
+        fallback: "google/gemini-2.0-flash:free",
         apiKeyEnv: "OPENROUTER_API_KEY",
       }
     case "mid":
       return {
         provider: "openrouter",
-        model: "google/gemini-2.0-flash-exp:free",
+        model: "google/gemini-2.0-flash:free",
         fallback: "meta-llama/llama-3.2-3b-instruct:free",
         apiKeyEnv: "OPENROUTER_API_KEY",
       }
@@ -36,7 +36,7 @@ export function routeModel(tier: BudgetTier): ModelRoute {
       return {
         provider: "openrouter",
         model: "anthropic/claude-3.5-sonnet",
-        fallback: "google/gemini-2.0-flash-exp:free",
+        fallback: "google/gemini-2.0-flash:free",
         apiKeyEnv: "OPENROUTER_API_KEY",
       }
   }

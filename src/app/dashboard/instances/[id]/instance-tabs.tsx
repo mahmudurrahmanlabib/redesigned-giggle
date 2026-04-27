@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState, useTransition } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import { buildPublicGatewayUrl } from "@/lib/instance-gateway-access"
 
@@ -176,7 +176,7 @@ export function InstanceTabs({
       {active === "overview" && <OverviewTab instance={instance} logs={logs} />}
       {active === "controls" && <ControlsTab instance={instance} />}
       {active === "interfaces" && <InterfacesTab instance={instance} />}
-      {active === "logs" && <LogsTab logs={logs} />}
+      {active === "logs" && <LogsTab instanceId={instance.id} logs={logs} />}
       {active === "danger" && <DangerTab instance={instance} />}
     </div>
   )
@@ -630,7 +630,8 @@ const PROVISION_STEPS = [
   { match: "OpenClaw configuration written", label: "Configuration applied" },
   { match: "Caddy reloaded", label: "Routing online" },
   { match: "systemd service active", label: "Service running" },
-  { match: "Gateway port listening", label: "Health check passed" },
+  { match: "Gateway port listening", label: "Port check passed" },
+  { match: "HTTP health check passed", label: "HTTP health check passed" },
   { match: "Deployment complete", label: "Deployment complete" },
   // Shared-cluster path
   { match: "Selecting shared host", label: "Selecting host" },
@@ -686,7 +687,14 @@ function useSmoothedProvisioningElapsed(active: boolean, createdAt: string) {
     }
     tick()
     const id = setInterval(tick, 1000)
-    return () => clearInterval(id)
+    const onVisible = () => {
+      if (document.visibilityState === "visible") tick()
+    }
+    document.addEventListener("visibilitychange", onVisible)
+    return () => {
+      clearInterval(id)
+      document.removeEventListener("visibilitychange", onVisible)
+    }
   }, [active, createdAt])
   return label
 }
@@ -781,18 +789,6 @@ function OverviewTab({ instance, logs }: { instance: InstanceLite; logs: LogLite
       {instance.domain && instance.status === "running" && <DnsCard instance={instance} />}
       {instance.managedSubdomain && !instance.domain && instance.status === "running" && (
         <ManagedHostnameCard instance={instance} />
-      )}
-      {instance.hasOpenclawPassword && instance.status === "running" && (
-        <CredentialsCard
-          instanceId={instance.id}
-          domain={instance.domain}
-          managedSubdomain={instance.managedSubdomain}
-          tlsStatus={instance.tlsStatus}
-          ipAddress={instance.ipAddress}
-        />
-      )}
-      {instance.hasRootPassword && instance.status === "running" && (
-        <ServerAccessCard instanceId={instance.id} ipAddress={instance.ipAddress} />
       )}
       {instance.hasGatewayToken && instance.deploymentTarget === "vps" && (
         <GatewayTokenCard instanceId={instance.id} />
@@ -985,6 +981,18 @@ function ControlsTab({ instance }: { instance: InstanceLite }) {
         </Card>
       )}
       {isVps && <DomainManageCard instance={instance} onFlash={flash} />}
+      {instance.hasOpenclawPassword && instance.status === "running" && (
+        <CredentialsCard
+          instanceId={instance.id}
+          domain={instance.domain}
+          managedSubdomain={instance.managedSubdomain}
+          tlsStatus={instance.tlsStatus}
+          ipAddress={instance.ipAddress}
+        />
+      )}
+      {instance.hasRootPassword && instance.status === "running" && (
+        <ServerAccessCard instanceId={instance.id} ipAddress={instance.ipAddress} />
+      )}
       {toast && (
         <div className="md:col-span-2 px-4 py-2 text-xs font-mono text-[var(--text-primary)] bg-[var(--card-bg)] border border-[var(--accent-color)]/40">
           {toast}
@@ -1093,9 +1101,68 @@ function InterfacesTab({ instance }: { instance: InstanceLite }) {
 }
 
 /* ───────────── LOGS ───────────── */
-function LogsTab({ logs }: { logs: LogLite[] }) {
+function LogsTab({ instanceId, logs: polledLogs }: { instanceId: string; logs: LogLite[] }) {
   const [level, setLevel] = useState<"all" | "info" | "warn" | "error">("all")
-  const filtered = logs.filter((l) => level === "all" || l.level === level)
+  const [olderLogs, setOlderLogs] = useState<LogLite[]>([])
+  const [cursor, setCursor] = useState<string | null>(null)
+  const [hasMore, setHasMore] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [initialized, setInitialized] = useState(false)
+
+  const allLogs = useMemo(() => {
+    const seen = new Set<string>()
+    const merged: LogLite[] = []
+    for (const l of polledLogs) {
+      if (!seen.has(l.id)) { seen.add(l.id); merged.push(l) }
+    }
+    for (const l of olderLogs) {
+      if (!seen.has(l.id)) { seen.add(l.id); merged.push(l) }
+    }
+    return merged
+  }, [polledLogs, olderLogs])
+
+  const filtered = allLogs.filter((l) => level === "all" || l.level === level)
+
+  async function loadMore() {
+    setLoading(true)
+    try {
+      const qs = new URLSearchParams({ limit: "50" })
+      if (cursor) qs.set("cursor", cursor)
+      if (level !== "all") qs.set("level", level)
+      const r = await fetch(`/api/instances/${instanceId}/logs?${qs}`, { cache: "no-store" })
+      if (!r.ok) return
+      const data = await r.json() as { logs: LogLite[]; nextCursor: string | null }
+      setOlderLogs((prev) => [...prev, ...data.logs])
+      setCursor(data.nextCursor)
+      setHasMore(data.nextCursor !== null)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!initialized) {
+      setInitialized(true)
+      loadMore()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    setOlderLogs([])
+    setCursor(null)
+    setHasMore(true)
+    setInitialized(false)
+  }, [level])
+
+  useEffect(() => {
+    if (!initialized) {
+      setInitialized(true)
+      loadMore()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialized])
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
@@ -1113,27 +1180,38 @@ function LogsTab({ logs }: { logs: LogLite[] }) {
           </button>
         ))}
       </div>
-      <div className="border border-[var(--border-color)] bg-black/60 p-4 font-mono text-xs space-y-1 max-h-[28rem] overflow-y-auto">
-        {filtered.length === 0 ? (
+      <div className="border border-[var(--border-color)] bg-black/60 p-4 font-mono text-xs space-y-1 max-h-[36rem] overflow-y-auto">
+        {filtered.length === 0 && !loading ? (
           <p className="text-[var(--text-secondary)]">No log entries.</p>
         ) : (
-          filtered.map((l) => (
-            <p key={l.id}>
-              <span className="text-[var(--text-secondary)]/60">{l.createdAt.slice(0, 19)}</span>{" "}
-              <span
-                className={
-                  l.level === "error"
-                    ? "text-red-400"
-                    : l.level === "warn"
-                    ? "text-amber-400"
-                    : "text-[var(--accent-color)]"
-                }
+          <>
+            {filtered.map((l) => (
+              <p key={l.id}>
+                <span className="text-[var(--text-secondary)]/60">{l.createdAt.slice(0, 19)}</span>{" "}
+                <span
+                  className={
+                    l.level === "error"
+                      ? "text-red-400"
+                      : l.level === "warn"
+                      ? "text-amber-400"
+                      : "text-[var(--accent-color)]"
+                  }
+                >
+                  [{l.level}]
+                </span>{" "}
+                <span className="text-[var(--text-primary)]">{l.message}</span>
+              </p>
+            ))}
+            {hasMore && (
+              <button
+                onClick={loadMore}
+                disabled={loading}
+                className="mt-3 px-4 py-1.5 text-[10px] uppercase tracking-[0.08em] font-mono border border-[var(--border-color)] text-[var(--text-secondary)] hover:border-[var(--accent-color)] hover:text-[var(--accent-color)] disabled:opacity-50"
               >
-                [{l.level}]
-              </span>{" "}
-              <span className="text-[var(--text-primary)]">{l.message}</span>
-            </p>
-          ))
+                {loading ? "Loading…" : "Load More"}
+              </button>
+            )}
+          </>
         )}
       </div>
     </div>

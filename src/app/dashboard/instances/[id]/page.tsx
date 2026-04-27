@@ -37,7 +37,7 @@ export default async function InstanceDetailPage({
       serverConfig: true,
       logs: {
         orderBy: (logs, { desc }) => desc(logs.createdAt),
-        limit: 20,
+        limit: 50,
       },
     },
   })
