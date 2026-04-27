@@ -91,11 +91,10 @@ export function renderOpenclawConfig(args: {
 
   const config = {
     gateway: {
+      mode: "local",
       port: OPENCLAW_GATEWAY_PORT,
       bind: "loopback",
-      disabledPlugins: ["bonjour", "device-pair", "phone-control", "browser"],
-      auth: { token: args.gatewayToken },
-      remote: { token: args.gatewayToken },
+      auth: { mode: "token" as const, token: args.gatewayToken },
       trustedProxies: ["127.0.0.1"],
       controlUi: {
         allowedOrigins,
@@ -153,7 +152,11 @@ export function renderCaddyfile(args: RenderCaddyfileArgs): string {
 `
   const managed = args.managedSubdomain?.trim()
   if (managed && args.useCfOriginTls) {
-    return `${managed} {
+    return `{
+  ocsp_stapling off
+}
+
+${managed} {
   tls /etc/caddy/cf/origin.pem /etc/caddy/cf/origin.key
   ${upstreamBlock}
 }
@@ -197,7 +200,7 @@ EnvironmentFile=/opt/openclaw/.env
 Environment=NODE_COMPILE_CACHE=/var/tmp/openclaw-compile-cache
 Environment=OPENCLAW_NO_RESPAWN=1
 Environment=HOME=/opt/openclaw
-ExecStart=/usr/bin/openclaw gateway --config /opt/openclaw/.openclaw/openclaw.json
+ExecStart=/usr/bin/openclaw gateway --allow-unconfigured
 Restart=always
 RestartSec=2
 TimeoutStartSec=90

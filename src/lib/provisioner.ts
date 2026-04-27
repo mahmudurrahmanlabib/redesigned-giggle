@@ -605,22 +605,27 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
   let currentStage: VpsStage = "create_vm"
 
   try {
-    /* --- 1. Create VM (with cloud-init bootstrap) -------------------- */
+    /* --- 1. Create VM ------------------------------------------------- */
+    const goldenImage = process.env.LINODE_GOLDEN_IMAGE
+    const useGoldenImage = Boolean(goldenImage)
+
     currentStage = "create_vm"
     await setProvisionStage(instance.id, currentStage)
     if (!vmId) {
       await logInstanceEvent({
         instanceId: instance.id,
         stage: currentStage,
-        message: `Creating VM (${providerPlan} in ${providerRegion})...`,
+        message: `Creating VM (${providerPlan} in ${providerRegion})${useGoldenImage ? ` from golden image ${goldenImage}` : " with cloud-init bootstrap"}...`,
       })
 
-      const bootstrapScript = buildBootstrapScript({
-        openclawVersion: OPENCLAW_VERSION(),
-        minNodeVersion: OPENCLAW_VPS_MIN_NODE,
-        cfOriginCertPem,
-        cfOriginKeyPem,
-      })
+      const bootstrapScript = useGoldenImage
+        ? undefined
+        : buildBootstrapScript({
+            openclawVersion: OPENCLAW_VERSION(),
+            minNodeVersion: OPENCLAW_VPS_MIN_NODE,
+            cfOriginCertPem,
+            cfOriginKeyPem,
+          })
 
       const publicKey = process.env.SSH_FLEET_PUBLIC_KEY
       const rootPassword = generateRootPassword()
@@ -629,6 +634,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
         plan: providerPlan,
         region: providerRegion,
         rootPassword,
+        image: goldenImage || undefined,
         authorizedKeys: publicKey ? [publicKey] : undefined,
         tags: ["sovereignml", "openclaw", "vps"],
         userData: bootstrapScript,
@@ -646,7 +652,7 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
         action: "vm_created",
         result: "ok",
         detail: { vmId },
-        message: `VM ${vmId} created with cloud-init bootstrap. Waiting for boot...`,
+        message: `VM ${vmId} created${useGoldenImage ? " (golden image)" : " with cloud-init bootstrap"}. Waiting for boot...`,
       })
     }
 
@@ -709,21 +715,33 @@ async function provisionVpsBot(instance: Instance): Promise<ProvisionResult> {
     await sshWaitReady(target)
 
     /* --- 4. Wait for cloud-init bootstrap to complete ---------------- */
-    currentStage = "bootstrap"
-    await setProvisionStage(instance.id, currentStage)
-    await logInstanceEvent({
-      instanceId: instance.id,
-      stage: currentStage,
-      message: PROVISION_EVENT.bootstrapping,
-    })
-    await sshPollBootstrap(target)
-    await logInstanceEvent({
-      instanceId: instance.id,
-      stage: currentStage,
-      action: "bootstrap_complete",
-      result: "ok",
-      message: PROVISION_EVENT.bootstrapComplete,
-    })
+    if (useGoldenImage) {
+      currentStage = "bootstrap"
+      await setProvisionStage(instance.id, currentStage)
+      await logInstanceEvent({
+        instanceId: instance.id,
+        stage: currentStage,
+        action: "bootstrap_complete",
+        result: "ok",
+        message: "Golden image — bootstrap already complete. Skipping cloud-init.",
+      })
+    } else {
+      currentStage = "bootstrap"
+      await setProvisionStage(instance.id, currentStage)
+      await logInstanceEvent({
+        instanceId: instance.id,
+        stage: currentStage,
+        message: PROVISION_EVENT.bootstrapping,
+      })
+      await sshPollBootstrap(target)
+      await logInstanceEvent({
+        instanceId: instance.id,
+        stage: currentStage,
+        action: "bootstrap_complete",
+        result: "ok",
+        message: PROVISION_EVENT.bootstrapComplete,
+      })
+    }
 
     /* --- 5. Credentials --------------------------------------------- */
     const adminEmail =

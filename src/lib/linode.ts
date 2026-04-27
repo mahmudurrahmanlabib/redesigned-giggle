@@ -3,9 +3,13 @@ import {
   deleteLinode,
   getLinode,
   getLinodes,
+  getLinodeDisks,
+  createImage,
+  getImage,
   setToken,
 } from "@linode/api-v4"
 import type { Linode, CreateLinodeRequest } from "@linode/api-v4/lib/linodes"
+import type { Image } from "@linode/api-v4/lib/images"
 import type { VmProvider, CreateVmOpts, VmInfo } from "@/lib/vm-provider"
 
 let tokenInitialized = false
@@ -102,6 +106,48 @@ export class LinodeProvider implements VmProvider {
       if (isLinodeNotFound(err)) return null
       throw err
     }
+  }
+
+  async getFirstDiskId(linodeId: string): Promise<number> {
+    ensureToken()
+    const resp = await getLinodeDisks(Number(linodeId))
+    const disks = resp.data ?? []
+    if (disks.length === 0) {
+      throw new Error(`Linode ${linodeId} has no disks`)
+    }
+    return disks[0].id
+  }
+
+  async captureImage(opts: {
+    linodeId: string
+    diskId: number
+    label: string
+    description?: string
+    tags?: string[]
+  }): Promise<Image> {
+    ensureToken()
+    return createImage({
+      disk_id: opts.diskId,
+      label: opts.label,
+      description: opts.description,
+      tags: opts.tags,
+      cloud_init: true,
+    })
+  }
+
+  async waitForImage(
+    imageId: string,
+    timeoutMs = 600_000,
+    pollMs = 10_000,
+  ): Promise<Image> {
+    ensureToken()
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      const img = await getImage(imageId)
+      if (img.status === "available") return img
+      await new Promise((r) => setTimeout(r, pollMs))
+    }
+    throw new Error(`Image ${imageId} did not become available within ${timeoutMs}ms`)
   }
 
   async listVMs(filter?: { tag?: string }): Promise<VmInfo[]> {

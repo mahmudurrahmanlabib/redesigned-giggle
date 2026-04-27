@@ -304,7 +304,7 @@ step "apt_update"
 apt-get $APT_OPTS update -y
 
 step "build_deps"
-apt-get $APT_OPTS install -y ca-certificates curl gnupg ufw git build-essential python3 debian-keyring debian-archive-keyring apt-transport-https
+apt-get $APT_OPTS install -y ca-certificates curl gnupg ufw git debian-keyring debian-archive-keyring apt-transport-https
 
 step "caddy_repo"
 curl --retry 5 --retry-delay 3 -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
