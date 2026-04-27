@@ -38,11 +38,6 @@ export async function GET(
     limit: 50,
   })
 
-  const provisioningElapsedSec =
-    instance.status === "pending" || instance.status === "provisioning"
-      ? Math.max(0, Math.floor((Date.now() - instance.createdAt.getTime()) / 1000))
-      : null
-
   return NextResponse.json({
     status: instance.status,
     ipAddress: instance.ipAddress,
@@ -50,7 +45,6 @@ export async function GET(
     tlsStatus: instance.tlsStatus,
     managedSubdomain: instance.managedSubdomain,
     provisionStage: instance.provisionStage ?? null,
-    provisioningElapsedSec,
     logs: logs.map((l) => ({
       id: l.id,
       level: l.level,

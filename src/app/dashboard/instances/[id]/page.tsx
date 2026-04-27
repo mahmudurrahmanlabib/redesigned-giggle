@@ -44,11 +44,6 @@ export default async function InstanceDetailPage({
 
   if (!instance) notFound()
 
-  const provisioningElapsedSec =
-    instance.status === "pending" || instance.status === "provisioning"
-      ? Math.max(0, Math.floor((Date.now() - instance.createdAt.getTime()) / 1000))
-      : null
-
   const access = buildPublicGatewayUrl({
     ipAddress: instance.ipAddress,
     domain: instance.domain,
@@ -149,7 +144,6 @@ export default async function InstanceDetailPage({
           hasGatewayToken: Boolean(instance.gatewayTokenEnc),
           deploymentTarget: instance.deploymentTarget,
           provisionStage: instance.provisionStage ?? null,
-          provisioningElapsedSec,
         }}
         logs={instance.logs.map((l) => ({
           id: l.id,
